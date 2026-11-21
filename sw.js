@@ -1,6 +1,6 @@
 // Guarda solo la "cáscara" de la app para que abra rápido y sin señal.
 // Las llamadas al servidor (Apps Script) nunca se guardan en caché.
-const CACHE = "grup7-v1";
+const CACHE = "grup7-v2";
 const SHELL = ["./", "index.html", "styles.css?v=1", "config.js?v=1", "logic.js?v=1", "store.js?v=1", "app.js?v=1", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {

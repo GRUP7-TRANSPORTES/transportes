@@ -83,6 +83,12 @@ async function copiar(texto) {
   try { await navigator.clipboard.writeText(texto); toast("Copiado. Pégalo en WhatsApp o en el correo.", "ok"); }
   catch { modal("Copiar resumen", el("textarea", { class: "in", rows: 14, value: texto, onfocus: (e) => e.target.select() })); }
 }
+// Abre WhatsApp con el texto ya escrito; la persona elige el chat o grupo y toca Enviar.
+function whatsapp(texto) {
+  window.open("https://wa.me/?text=" + encodeURIComponent(texto), "_blank", "noopener");
+}
+const btnWhatsApp = (texto, etiqueta = "Enviar por WhatsApp", cls = "btn wa") =>
+  el("button", { class: cls, onclick: () => whatsapp(typeof texto === "function" ? texto() : texto) }, etiqueta);
 const csv = (filas) => filas.map((f) => f.map((x) => { const s = String(x == null ? "" : x); return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(";")).join("\r\n");
 
 // ---------------------------------------------------------------- estado
@@ -395,6 +401,7 @@ function vComisiones() {
   const puede = es(R.JEFE, R.OPS);
   return el("div", null,
     el("div", { class: "toolbar" }, chipsFecha(f, (v) => { S.fCom = v; render(); }), el("span", { class: "grow" }),
+      puede && coms.some((c) => c.estado !== "CANCELADA") ? btnWhatsApp(() => G.textoParte(f, S.d.comisiones, S.d.vehiculos, S.d.personal), "Parte por WhatsApp") : null,
       puede ? el("button", { class: "btn ac big", onclick: () => formComision(null, f) }, "+ Nueva comisión") : null),
     el("h2", null, "Comisiones del " + G.fechaLarga(f)),
     panelRetornos(f),
@@ -600,7 +607,8 @@ function vPapeletas() {
   return el("div", null,
     el("div", { class: "toolbar" }, chipsFecha(f, (v) => { S.fDoc = v; render(); }), el("span", { class: "grow" }),
       el("button", { class: "btn", onclick: () => exportarDia(f, coms, abast) }, "Exportar CSV (Excel)"),
-      el("button", { class: "btn", onclick: () => copiar(resumenTexto(f, coms, r)) }, "Copiar resumen")),
+      el("button", { class: "btn", onclick: () => copiar(resumenTexto(f, coms, r)) }, "Copiar resumen"),
+      btnWhatsApp(() => resumenTexto(f, coms, r))),
     el("h2", null, "Papeletas del " + G.fechaLarga(f)),
     el("div", { class: "grid2" }, ["GASOHOL", "PETROLEO"].map((t) => tarjetaComb(t, r.porComb[t]))),
     el("h3", null, "Comisiones (" + coms.length + ")"),
@@ -801,11 +809,13 @@ function vPersonal() {
           try { await api("reset_pin", { persona_id: p.id }); toast("PIN reiniciado. " + p.nombre + " creará uno nuevo al ingresar.", "ok"); await sincronizar(true); } catch (e) { toast(e.message, "bad"); }
         } }, "Reiniciar PIN") : null)))))),
     el("p", { class: "small mut" }, "Para agregar o dar de baja personal, edita la pestaña “Personal” de la hoja de cálculo (columna activo = FALSE)."),
-    el("h2", null, "Parte de mañana (se envía solo a las 20:00)"),
+    el("h2", null, "Parte de mañana"),
+    el("p", { class: "small mut" }, "Toca “Enviar por WhatsApp”, elige el grupo del Departamento y envía. A las 20:00 el parte también aparece solo en la campana 🔔 de cada uno."),
     el("pre", { class: "parte" }, parte),
     el("div", { class: "row" },
-      el("button", { class: "btn primary", onclick: async () => { if (!confirm("¿Enviar ahora el parte de mañana a todo el personal?")) return; try { await api("enviar_parte"); toast("Parte enviado a todo el personal.", "ok"); await sincronizar(true); } catch (e) { toast(e.message, "bad"); } } }, "Enviar el parte ahora"),
-      el("button", { class: "btn", onclick: () => copiar(parte) }, "Copiar para WhatsApp")));
+      btnWhatsApp(parte, "Enviar por WhatsApp", "btn wa big"),
+      el("button", { class: "btn", onclick: () => copiar(parte) }, "Copiar texto"),
+      el("button", { class: "btn ghost", onclick: async () => { if (!confirm("¿Avisar ahora el parte de mañana en la app a todo el personal?")) return; try { await api("enviar_parte"); toast("Parte avisado en la app a todo el personal.", "ok"); await sincronizar(true); } catch (e) { toast(e.message, "bad"); } } }, "Avisar en la app ahora")));
 }
 
 // ---------------------------------------------------------------- inicio

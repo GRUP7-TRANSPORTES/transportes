@@ -50,6 +50,7 @@ h3 { font-size: 16px; margin: 18px 0 8px; }
 .btn { border: 2px solid var(--navy); background: var(--card); color: var(--navy); border-radius: 10px; padding: 10px 14px; font-weight: 700; cursor: pointer; min-height: 44px; }
 .btn.primary { background: var(--navy); color: #fff; }
 .btn.ac { background: var(--ac); border-color: var(--ac); color: var(--ac-ink); }
+.btn.wa { background: #1c7c54; border-color: #1c7c54; color: #fff; }
 .btn.bad { border-color: var(--bad); color: var(--bad); }
 .btn.ghost { border-color: var(--line); color: var(--ink); }
 .btn.big { min-height: 52px; font-size: 17px; padding: 12px 18px; }
