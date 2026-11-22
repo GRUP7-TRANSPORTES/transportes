@@ -17,6 +17,7 @@ var GRUP7 = (function () {
     Combustible: ["id", "fecha", "vehiculo_id", "combustible", "galones", "km_odometro", "vale", "comision_id", "registrado_por", "creado"],
     Eventos: ["id", "ts", "tipo", "para", "texto", "comision_id"],
     Config: ["id", "valor"],
+    Conductores: ["id", "nombre_doc", "persona_id", "activo"],
     Ordenes: ["id", "numero", "anio", "comision_id", "vehiculo_id", "chofer_id", "conductor", "vehiculo", "inicio", "termino", "galones", "combustible", "destino", "justificacion", "lugar", "fecha_emision",
       "f1_cargo", "f1_grado", "f1_nombre", "f1_cip", "f2_cargo", "f2_grado", "f2_nombre", "f2_cip", "creado_por", "creado", "actualizado"],
   };
@@ -430,6 +431,8 @@ var GRUP7 = (function () {
       combustible: ctx.yo.rol === ROL.CHOFER ? [] : ctx.db.all("Combustible").filter(function (a) { return a.fecha >= desde; }),
       eventos: eventos,
       ordenes: ROLES_ORDEN.indexOf(ctx.yo.rol) < 0 ? [] : ctx.db.all("Ordenes").filter(function (o) { return num(o.anio) >= num(hoy.slice(0, 4)) - 1; }),
+      conductores: ROLES_ORDEN.indexOf(ctx.yo.rol) < 0 ? [] : ctx.db.all("Conductores").filter(esActivo),
+      firmas_om: ROLES_ORDEN.indexOf(ctx.yo.rol) < 0 ? null : firmasOM(ctx.db),
       yo: publico(ctx.yo),
     };
   };
@@ -685,8 +688,15 @@ var GRUP7 = (function () {
     return extra(T.CONDUCTOR, 28, 48) + extra(T.VEHICULO, 33, 48) + extra(T.DESTINO, 34, 50) + extra(T.JUSTIFICACION, 34, 50) +
       extra(T.F1_CARGO, 46, 46) + extra(T.F2_CARGO, 46, 46) + extra(T.F1_NOMBRE, 40, 40) + extra(T.F2_NOMBRE, 40, 40);
   }
-  // Borrador: toma la comisión y recuerda lo último escrito (nombre completo del chofer, placa, firmas).
-  function borradorOrden(c, vehiculos, personal, ordenes, hoy) {
+  // Firmas fijas de la orden: filas om_f1_cargo, om_f1_grado, ... de la pestaña Config (las carga el servidor).
+  const CLAVES_FIRMA = ["f1_cargo", "f1_grado", "f1_nombre", "f1_cip", "f2_cargo", "f2_grado", "f2_nombre", "f2_cip"];
+  function firmasOM(db) {
+    const f = {};
+    CLAVES_FIRMA.forEach(function (k) { const r = db.get("Config", "om_" + k); f[k] = r ? String(r.valor || "") : ""; });
+    return f.f1_nombre && f.f2_nombre ? f : null;
+  }
+  // Borrador: toma la comisión, el conductor de la lista y las firmas fijas; recuerda la placa de la última orden.
+  function borradorOrden(c, vehiculos, personal, ordenes, hoy, conductores, firmas) {
     const prev = ordenes.slice().sort(function (a, b) { return String(b.creado).localeCompare(String(a.creado)); });
     const ult = prev[0] || {};
     const veh = c ? mapa(vehiculos)[c.vehiculo_id] : null;
@@ -696,14 +706,17 @@ var GRUP7 = (function () {
     const anio = +(c ? c.fecha : hoy).slice(0, 4);
     const o = {
       id: "", numero: siguienteNumero(ordenes, anio), anio: anio, comision_id: c ? c.id : "", vehiculo_id: c ? c.vehiculo_id : "", chofer_id: c ? c.chofer_id : "",
-      conductor: delCh ? delCh.conductor : ch ? mayus(ch.nombre) : "", vehiculo: delVeh ? delVeh.vehiculo : veh ? mayus(veh.nombre) : "",
+      conductor: "", vehiculo: delVeh ? delVeh.vehiculo : veh ? mayus(veh.nombre) : "",
       inicio: c ? c.fecha : hoy, termino: c ? c.fecha : hoy, galones: "", combustible: veh ? veh.combustible : "PETROLEO",
       destino: c ? "GRUP7 – " + mayus(c.destino) + " – GRUP7" : "", justificacion: c ? mayus("COMISIÓN " + [c.motivo, c.solicitante].filter(Boolean).join(" – ")) : "",
       lugar: ult.lugar || "Castilla", fecha_emision: hoy,
     };
-    // Cargos por defecto (los del formato); nombres y CIP los escribe Documentario la primera vez y luego se recuerdan.
+    // Conductor: el de la lista ligado al chofer de la comisión; si no, el de su última orden.
+    const delaLista = c && (conductores || []).filter(function (x) { return x.persona_id && x.persona_id === c.chofer_id; })[0];
+    o.conductor = delaLista ? delaLista.nombre_doc : delCh ? delCh.conductor : "";
+    // Firmas: siempre las fijas del servidor; si aún no existen, las de la última orden.
     const porDefecto = { f1_cargo: "EL CMDTE DEL ESC. DE BASE AÉREA Nº707", f1_grado: "Capitán FAP", f2_cargo: "EL COMANDANTE DEL GRUPO AÉREO N° 7", f2_grado: "Coronel FAP" };
-    ["f1_cargo", "f1_grado", "f1_nombre", "f1_cip", "f2_cargo", "f2_grado", "f2_nombre", "f2_cip"].forEach(function (k) { o[k] = ult[k] || porDefecto[k] || ""; });
+    CLAVES_FIRMA.forEach(function (k) { o[k] = firmas ? firmas[k] : ult[k] || porDefecto[k] || ""; });
     const sug = c ? galonesSugeridos(c.destino, veh) : null;
     if (sug) o.galones = sug;
     return o;
@@ -714,6 +727,8 @@ var GRUP7 = (function () {
     const e = body.orden || {};
     const o = {};
     CAMPOS_ORDEN.forEach(function (k) { o[k] = txt(e[k], k === "justificacion" || k === "destino" ? 200 : 80); });
+    const fijas = firmasOM(ctx.db);
+    if (fijas) CLAVES_FIRMA.forEach(function (k) { o[k] = fijas[k]; });
     o.combustible = o.combustible === "GASOHOL" ? "GASOHOL" : "PETROLEO";
     o.galones = r1(num(e.galones));
     o.numero = Math.round(num(e.numero));
@@ -808,7 +823,7 @@ var GRUP7 = (function () {
     validarComision: validarComision, eventosPara: eventosPara, destinatarios: destinatarios, publico: publico,
     H: H, Jobs: Jobs, ejecutar: ejecutar, falla: falla, num: num, norm: norm,
     ROLES_ORDEN: ROLES_ORDEN, fechaOrden: fechaOrden, fechaEmision: fechaEmision, combustibleOrden: combustibleOrden, galonesSugeridos: galonesSugeridos,
-    siguienteNumero: siguienteNumero, numeroOrden: numeroOrden, textosOrden: textosOrden, lineasExtraOrden: lineasExtraOrden, MAX_LINEAS_EXTRA: MAX_LINEAS_EXTRA, borradorOrden: borradorOrden, destinoPreset: destinoPreset,
+    siguienteNumero: siguienteNumero, numeroOrden: numeroOrden, textosOrden: textosOrden, lineasExtraOrden: lineasExtraOrden, MAX_LINEAS_EXTRA: MAX_LINEAS_EXTRA, firmasOM: firmasOM, CLAVES_FIRMA: CLAVES_FIRMA, borradorOrden: borradorOrden, destinoPreset: destinoPreset,
   };
   return api;
 })();

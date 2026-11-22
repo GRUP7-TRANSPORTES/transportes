@@ -800,6 +800,7 @@ function vTablero() {
 const fCorta = (f) => f ? f.slice(8) + "/" + f.slice(5, 7) + "/" + f.slice(0, 4) : "";
 const nOrden = (o) => G.numeroOrden(o) + "–" + o.anio;
 const ordenDe = (cid) => (S.d.ordenes || []).find((o) => o.comision_id === cid);
+const borrador = (c) => G.borradorOrden(c, S.d.vehiculos, S.d.personal, S.d.ordenes || [], hoy(), S.d.conductores || [], S.d.firmas_om || null);
 
 function vOrdenes() {
   const h = hoy(), desde = G.sumarDias(h, -7);
@@ -808,8 +809,8 @@ function vOrdenes() {
   const ords = (S.d.ordenes || []).slice().sort((a, b) => (b.anio - a.anio) || (G.num(b.numero) - G.num(a.numero)));
   return el("div", null,
     el("div", { class: "toolbar" }, el("h2", { style: "margin:0" }, "Órdenes de movimiento"), el("span", { class: "grow" }),
-      el("button", { class: "btn", onclick: () => formOrden(G.borradorOrden(null, S.d.vehiculos, S.d.personal, S.d.ordenes || [], h)) }, "+ Orden sin comisión")),
-    el("p", { class: "small mut" }, "Para comisiones fuera de Piura. Elige la comisión, revisa los datos y descarga el Word (mismo formato del Departamento) o imprímela directo."),
+      el("button", { class: "btn", onclick: () => formOrden(borrador(null)) }, "+ Orden sin comisión")),
+    el("p", { class: "small mut" }, "Para comisiones fuera de Piura. Elige la comisión, revisa los datos y descarga el PDF listo para imprimir (A4 horizontal, 2 copias en una hoja)."),
     pend.length ? el("div", { class: "alert warn" }, el("b", null, pend.length + " comisión(es) fuera de Piura sin orden de movimiento")) : null,
     coms.length ? el("div", { class: "list two" }, coms.map(cardOrdenComision))
       : vacio("No hay comisiones fuera de Piura en los últimos 7 días ni programadas."),
@@ -821,8 +822,7 @@ function vOrdenes() {
 }
 function accionesOrden(o, conBorrar) {
   return [
-    el("button", { class: "btn primary", onclick: () => descargarOrdenWord(o) }, "Word"),
-    el("button", { class: "btn", onclick: () => imprimirOrden(o) }, "Imprimir / PDF"),
+    el("button", { class: "btn primary", onclick: () => descargarOrdenPDF(o) }, "PDF"),
     el("button", { class: "btn ghost", onclick: () => formOrden(Object.assign({}, o)) }, "Editar"),
     conBorrar ? el("button", { class: "btn ghost", onclick: async () => {
       if (!confirm("¿Borrar la Orden N.º " + nOrden(o) + "? No se puede deshacer.")) return;
@@ -837,7 +837,7 @@ function cardOrdenComision(c) {
       o ? tag("Orden N.º " + nOrden(o), "t-ok") : tag("Sin orden", c.fecha >= hoy() ? "t-bad" : "t-mut")),
     el("p", { class: "small" }, (v ? v.nombre : "") + " · " + (ch ? ch.nombre : "") + " · " + G.ZONA[c.zona] + (c.motivo ? " · " + c.motivo : "")),
     el("div", { class: "row", style: "gap:6px" }, o ? accionesOrden(o, false)
-      : el("button", { class: "btn ac", onclick: () => formOrden(G.borradorOrden(c, S.d.vehiculos, S.d.personal, S.d.ordenes || [], hoy())) }, "Hacer orden de movimiento")));
+      : el("button", { class: "btn ac", onclick: () => formOrden(borrador(c)) }, "Hacer orden de movimiento")));
 }
 
 function formOrden(o) {
@@ -848,28 +848,40 @@ function formOrden(o) {
   const v = c ? veh(c.vehiculo_id) : null;
   const sug = c ? G.galonesSugeridos(c.destino, v) : null;
   const pre = G.destinoPreset(c ? c.destino : "");
+  // Firmas fijas: siempre las del servidor (no se editan aquí).
+  if (S.d.firmas_om) G.CLAVES_FIRMA.forEach((k) => (F[k] = S.d.firmas_om[k]));
   const nota = el("p", { class: "small mut" });
   const largo = el("p", { class: "small mut" });
   const prev = el("pre", { class: "parte", style: "white-space:pre-wrap" });
   function previa() {
     const T = G.textosOrden(F);
     nota.textContent = "Combustible en la orden: " + T.COMBUSTIBLE + (sug ? " · sugerido " + sug + " gl (ida y vuelta ~" + pre.km * 2 + " km + 10 %, " + v.km_gl + " km/gl)" : "");
-    const extra = G.lineasExtraOrden(T);
-    largo.className = "small " + (extra > G.MAX_LINEAS_EXTRA ? "bad" : "mut");
-    largo.textContent = extra > G.MAX_LINEAS_EXTRA ? "⚠ Muy largo: no entraría en una hoja. Acorta la justificación o el destino."
-      : extra ? "Hay " + extra + " línea(s) de más: el documento quita renglones en blanco para seguir en una sola hoja." : "";
+    const muyLargo = G.lineasExtraOrden(T) > G.MAX_LINEAS_EXTRA;
+    largo.className = "small " + (muyLargo ? "bad" : "mut");
+    largo.textContent = muyLargo ? "⚠ Muy largo: no entraría en una hoja. Acorta la justificación o el destino." : "";
     prev.textContent = "ORDEN DE MISION FAP N° " + T.NUMERO + "– " + T.ANIO + "\nCONDUCTOR      : " + T.CONDUCTOR + "\nVEHICULO       : " + T.VEHICULO + "\nINICIO         : " + T.INICIO +
       "\nTERMINO        : " + T.TERMINO + "\nCOMBUSTIBLE    : " + T.COMBUSTIBLE + "\nDESTINO        : " + T.DESTINO + "\nJUSTIFICACION  : " + T.JUSTIFICACION + "\n\n" + T.LUGAR + ", " + T.FECHA + ".";
   }
-  const firmaVacia = !F.f1_nombre && !F.f2_nombre;
-  const firma = (n) => el("div", { class: "card", style: "margin-top:8px" }, el("b", null, "Firma " + n + (n === 1 ? " (izquierda arriba)" : " (abajo)")),
-    el("div", { class: "fila2" }, campo("Cargo", input("f" + n + "_cargo", { placeholder: n === 1 ? "EL CMDTE DEL ESC. DE BASE AÉREA Nº707" : "EL COMANDANTE DEL GRUPO AÉREO N° 7" })), campo("Grado", input("f" + n + "_grado", { placeholder: n === 1 ? "Capitán FAP" : "Coronel FAP" }))),
-    el("div", { class: "fila2" }, campo("Nombre", input("f" + n + "_nombre")), campo("CIP / código", input("f" + n + "_cip"))));
+  // Conductor: lista desplegable (pestaña Conductores de la hoja) u "Otro".
+  const lista = (S.d.conductores || []).map((x) => x.nombre_doc).filter(Boolean);
+  const OTRO = "__otro__";
+  const txtCond = input("conductor", { placeholder: "Grado y nombre completo" });
+  const selCond = el("select", { class: "in", onchange: (e) => {
+    txtCond.hidden = e.target.value !== OTRO;
+    F.conductor = e.target.value === OTRO ? txtCond.value : e.target.value;
+    if (e.target.value === OTRO) txtCond.focus();
+    previa();
+  } }, el("option", { value: "" }, "— Elige el conductor —"), lista.map((n) => el("option", { value: n, selected: n === F.conductor }, n)), el("option", { value: OTRO, selected: !!F.conductor && !lista.includes(F.conductor) }, "Otro (escribir)"));
+  txtCond.hidden = !(F.conductor && !lista.includes(F.conductor));
+  // Vehículo: sugerencias con lo ya usado (con placa) y la flota.
+  const usados = [...new Set((S.d.ordenes || []).map((x) => x.vehiculo).filter(Boolean).concat(S.d.vehiculos.map((x) => x.nombre)))];
+  const dl = el("datalist", { id: "om-vehiculos" }, usados.map((n) => el("option", { value: n })));
+  const f = (k) => F[k] || "—";
   const cuerpo = el("div", null,
     c ? el("p", null, el("b", null, "Comisión: " + fCorta(c.fecha) + " " + c.hora_salida + " · " + c.destino + " · " + (v ? v.nombre : ""))) : null,
     el("div", { class: "fila2" }, campo("N.º de orden", input("numero", { type: "number", inputmode: "numeric", min: 1 })), campo("Año", input("anio", { type: "number", inputmode: "numeric" }))),
-    campo("Conductor (grado y nombre como va en la orden)", input("conductor", { placeholder: "EC. FAP PAZ TORRES R." })),
-    campo("Vehículo y placa", input("vehiculo", { placeholder: "CAMIÓN HINO EAH-592" })),
+    campo("Conductor", el("div", null, selCond, txtCond)),
+    campo("Vehículo y placa", el("div", null, input("vehiculo", { placeholder: "CAMIÓN HINO EAH-592", list: "om-vehiculos" }), dl)),
     el("div", { class: "fila2" }, campo("Inicio", input("inicio", { type: "date" })), campo("Término", input("termino", { type: "date" }))),
     el("div", { class: "fila2" }, campo("Galones", input("galones", { type: "number", inputmode: "decimal", min: 1, step: "1" })),
       campo("Combustible", seg({ PETROLEO: "Diésel", GASOHOL: "Gasohol" }, F.combustible, (k) => { F.combustible = k; previa(); }))),
@@ -877,110 +889,120 @@ function formOrden(o) {
     campo("Destino", input("destino", { placeholder: "GRUP7 – SULLANA – GRUP7" })),
     campo("Justificación", el("textarea", { class: "in", rows: 2, value: F.justificacion || "", oninput: (e) => { F.justificacion = e.target.value; previa(); } })),
     el("div", { class: "fila2" }, campo("Lugar", input("lugar")), campo("Fecha del documento", input("fecha_emision", { type: "date" }))),
-    el("details", { open: firmaVacia }, el("summary", { style: "cursor:pointer;font-weight:700;margin-top:10px" }, "Firmas" + (firmaVacia ? " (llénalas una vez; se recuerdan)" : ": " + [F.f1_nombre, F.f2_nombre].filter(Boolean).join(" · "))), firma(1), firma(2)),
+    el("div", { class: "card", style: "margin-top:10px" }, el("b", null, "Firmas (fijas)"),
+      el("p", { class: "small" }, f("f1_cargo") + " · " + f("f1_grado") + " " + f("f1_nombre")),
+      el("p", { class: "small" }, f("f2_cargo") + " · " + f("f2_grado") + " " + f("f2_nombre")),
+      S.d.firmas_om ? null : el("p", { class: "small bad" }, "Faltan las firmas fijas en el servidor: avisa al Jefe.")),
     el("h3", null, "Vista previa"), largo, prev);
   previa();
-  async function guardar(despues) {
+  async function guardar() {
     try {
       const r = await api("guardar_orden", { orden: F });
       cerrar(); toast("Orden N.º " + nOrden(r.orden) + " guardada.", "ok");
       await sincronizar(true);
-      await despues(r.orden);
+      await descargarOrdenPDF(r.orden);
     } catch (e) { toast(e.message, "bad", 6000); }
   }
   const cerrar = modal(F.id ? "Editar orden N.º " + nOrden(F) : "Nueva orden de movimiento", cuerpo,
-    el("div", { class: "row" },
-      el("button", { class: "btn primary big", onclick: () => guardar(descargarOrdenWord) }, "Guardar y descargar Word"),
-      el("button", { class: "btn big", onclick: () => guardar(imprimirOrden) }, "Guardar e imprimir")));
+    el("button", { class: "btn primary big block", onclick: guardar }, "Guardar y descargar PDF"));
 }
 
-// ---------- Word (.docx) a partir de la plantilla del Departamento ----------
-let plantillaOM = null;
-async function cargarPlantillaOM() {
-  if (!plantillaOM) {
-    const r = await fetch("om-plantilla.json?v=3");
-    if (!r.ok) throw new Error("No se pudo cargar el formato de la orden (" + r.status + ")");
-    plantillaOM = (await r.json()).archivos;
-  }
-  return plantillaOM;
+// ---------- PDF de la orden (A4 horizontal, 2 copias, siempre 1 hoja, sin enlaces ni encabezados del navegador) ----------
+const JSPDF_URL = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+let cargandoPDF = null;
+function cargarJsPDF() {
+  if (window.jspdf && window.jspdf.jsPDF) return Promise.resolve(window.jspdf.jsPDF);
+  if (!cargandoPDF) cargandoPDF = new Promise((ok, mal) => {
+    const s = document.createElement("script");
+    s.src = JSPDF_URL; s.crossOrigin = "anonymous";
+    s.onload = () => ok(window.jspdf.jsPDF);
+    s.onerror = () => { cargandoPDF = null; mal(new Error("No se pudo preparar el PDF: revisa la conexión a internet.")); };
+    document.head.append(s);
+  });
+  return cargandoPDF;
 }
-const escXml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 function nombreArchivoOrden(o) { return ("Orden de Mision N " + G.numeroOrden(o) + "-" + o.anio + " " + String(o.destino).replace(/GRUP7/gi, "")).replace(/[^\wÁÉÍÓÚÑáéíóúñ -]+/g, " ").replace(/\s+/g, " ").trim(); }
-async function descargarOrdenWord(o) {
-  try {
-    const arch = await cargarPlantillaOM();
-    const T = G.textosOrden(o);
-    const extra = G.lineasExtraOrden(T);
-    if (extra > G.MAX_LINEAS_EXTRA) throw new Error("El texto es muy largo para que la orden entre en una hoja: acorta la justificación o el destino.");
-    let doc = arch["word/document.xml"];
-    // Quita un renglón en blanco por cada línea de más, para que siga entrando en una hoja.
-    for (let k = 1; k <= extra; k++) doc = doc.replace(new RegExp("<w:p [^>]*>(?:(?!</w:p>).)*\\{\\{ESP" + k + "\\}\\}(?:(?!</w:p>).)*</w:p>", "g"), "");
-    doc = doc.replace(/\{\{ESP\d\}\}/g, "").replace(/\{\{([A-Z0-9_]+)\}\}/g, (m, k) => escXml(T[k] == null ? "" : T[k]));
-    const partes = Object.keys(arch).sort((a, b) => (a === "[Content_Types].xml" ? -1 : b === "[Content_Types].xml" ? 1 : 0))
-      .map((p) => [p, p === "word/document.xml" ? doc : arch[p]]);
-    const blob = zipSinComprimir(partes, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-    const url = URL.createObjectURL(blob);
-    const a = el("a", { href: url, download: nombreArchivoOrden(o) + ".docx" });
-    document.body.append(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
-    toast("Word descargado. Ábrelo y mándalo a imprimir (A4 horizontal, salen 2 copias en la hoja).", "ok", 6000);
-  } catch (e) { toast(e.message, "bad", 6000); }
-}
-// ZIP mínimo (sin compresión): Word lo abre igual.
-const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
-function crc32(b) { let c = 0xffffffff; for (let i = 0; i < b.length; i++) c = CRC_T[(c ^ b[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
-function zipSinComprimir(partes, tipo) {
-  const enc = new TextEncoder(), trozos = [], central = [];
-  const d = new Date(), hora = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1), dia = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
-  let pos = 0;
-  for (const [nombre, texto] of partes) {
-    const n = enc.encode(nombre), datos = enc.encode(texto), crc = crc32(datos);
-    const loc = new DataView(new ArrayBuffer(30));
-    [[0, 0x04034b50, 4], [4, 20, 2], [6, 0x0800, 2], [8, 0, 2], [10, hora, 2], [12, dia, 2], [14, crc, 4], [18, datos.length, 4], [22, datos.length, 4], [26, n.length, 2], [28, 0, 2]]
-      .forEach(([o, v, l]) => (l === 4 ? loc.setUint32(o, v, true) : loc.setUint16(o, v, true)));
-    const cen = new DataView(new ArrayBuffer(46));
-    [[0, 0x02014b50, 4], [4, 20, 2], [6, 20, 2], [8, 0x0800, 2], [10, 0, 2], [12, hora, 2], [14, dia, 2], [16, crc, 4], [20, datos.length, 4], [24, datos.length, 4], [28, n.length, 2], [30, 0, 2], [32, 0, 2], [34, 0, 2], [36, 0, 2], [38, 0, 4], [42, pos, 4]]
-      .forEach(([o, v, l]) => (l === 4 ? cen.setUint32(o, v, true) : cen.setUint16(o, v, true)));
-    trozos.push(loc, n, datos); central.push(cen, n);
-    pos += 30 + n.length + datos.length;
-  }
-  const tamCentral = central.reduce((s, x) => s + x.byteLength, 0);
-  const fin = new DataView(new ArrayBuffer(22));
-  [[0, 0x06054b50, 4], [4, 0, 2], [6, 0, 2], [8, partes.length, 2], [10, partes.length, 2], [12, tamCentral, 4], [16, pos, 4], [20, 0, 2]]
-    .forEach(([o, v, l]) => (l === 4 ? fin.setUint32(o, v, true) : fin.setUint16(o, v, true)));
-  return new Blob([...trozos, ...central, fin], { type: tipo });
-}
+// Las fuentes estándar del PDF no traen "–" ni "…": se cambian por equivalentes.
+const pdfTxt = (s) => String(s == null ? "" : s).replace(/[–—]/g, "-").replace(/…/g, "...").replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+const DISPOSICIONES = [
+  "EL CONDUCTOR NO DEBERA HABER INGERIDO BEBIDAS ALCOHOLICAS 24 HORAS ANTES DE LA COMISION.",
+  "TENDRA PRESENTE LAS SIGUIENTE VELOCIDADES:",
+  "TENDRA PRECAUCION CON LAS PISTAS MOJADAS, CANGREJERAS, ROMPEMUELLES, ETC.",
+  "HARA USO OBLIGATORIO DEL CINTURON DE SEGURIDAD.",
+  "LLEVARA CONSIGO TODA LA DOCUMENTACION VIGENTE COMO TARJETA DE PROPIEDAD, BREVETE, SOAT Y REVISION TECNICA ACTUALIZADAS. ASI MISMO GATA, LLAVE DE TUERCA, LLANTA DE REPUESTO, TRIANGULO DE SEGURIDAD, ETC.",
+  "NO DESVIARSE DEL ITINERARIO FIJADO POR LA SUPERIORIDAD.",
+  "NO TRASLADAR EN EL VEHÍCULO PASAJEROS O CARGA PARTICULAR, CONSTITUYENDO CIRCUNSTANCIA AGRAVANTE POR OBTENER LUCRO.",
+];
+// Medidas del formato del Departamento (Word): A4 horizontal, márgenes 15 mm, 2 columnas con 18 mm entre ellas.
+const OM = { ancho: 297, alto: 210, izq: 15, der: 15, arriba: 12.5, abajo: 12, sep: 18, cab: 8.5 };
+OM.col = (OM.ancho - OM.izq - OM.der - OM.sep) / 2;
 
-// ---------- Vista para imprimir (o guardar como PDF) con el mismo diseño ----------
-function htmlOrden(o) {
-  const T = G.textosOrden(o), e = (s) => escXml(s);
-  const fila = (k, v, negrita) => "<tr" + (negrita ? " class=b" : "") + "><td class=k>" + k + "</td><td class=dp>:</td><td>" + e(v) + "</td></tr>";
-  const disp = ["EL CONDUCTOR NO DEBERA HABER INGERIDO BEBIDAS ALCOHOLICAS 24 HORAS ANTES DE LA COMISION.",
-    "TENDRA PRESENTE LAS SIGUIENTE VELOCIDADES:<br><span class=vel>MAXIMA DENTRO DE LA CIUDAD…. 40 KM/H<br>MAXIMA FUERA DE LA CIUDAD…. 90 KM/H</span>",
-    "TENDRA PRECAUCION CON LAS PISTAS MOJADAS, CANGREJERAS, ROMPEMUELLES, ETC.", "HARA USO OBLIGATORIO DEL CINTURON DE SEGURIDAD.",
-    "LLEVARA CONSIGO TODA LA DOCUMENTACION VIGENTE COMO TARJETA DE PROPIEDAD, BREVETE, SOAT Y REVISION TECNICA ACTUALIZADAS. ASI MISMO GATA, LLAVE DE TUERCA, LLANTA DE REPUESTO, TRIANGULO DE SEGURIDAD, ETC.",
-    "NO DESVIARSE DEL ITINERARIO FIJADO POR LA SUPERIORIDAD.", "NO TRASLADAR EN EL VEHÍCULO PASAJEROS O CARGA PARTICULAR, CONSTITUYENDO CIRCUNSTANCIA AGRAVANTE POR OBTENER LUCRO."];
-  const firma = (n) => "<div class=\"firma f" + n + "\">" + ["CARGO", "GRADO", "NOMBRE", "CIP"].map((k) => "<div>" + e(T["F" + n + "_" + k]) + "</div>").join("") + "</div>";
-  const copia = "<section><div class=cab><span>GRUPO AEREO N° 7</span><span>ESC. BASE AEREA N° 707</span></div>" +
-    "<h1>ORDEN DE MISION FAP N° <b>" + e(T.NUMERO) + "– " + e(T.ANIO) + "</b></h1><table class=datos>" +
-    fila("CONDUCTOR", T.CONDUCTOR, true) + fila("VEHICULO", T.VEHICULO, true) + fila("INICIO", T.INICIO) + fila("TERMINO", T.TERMINO) + fila("COMBUSTIBLE", T.COMBUSTIBLE) + fila("DESTINO", T.DESTINO) + fila("JUSTIFICACION", T.JUSTIFICACION) +
-    "</table><p class=ds>DISPOSICIONES DE SEGURIDAD:</p><ul>" + disp.map((x) => "<li>" + x + "</li>").join("") + "</ul>" +
-    "<p class=fecha>" + e(T.LUGAR) + ", " + e(T.FECHA) + ".</p>" + firma(1) + firma(2) + "</section>";
-  return "<!doctype html><html lang=es><head><meta charset=utf-8><title>" + e(nombreArchivoOrden(o)) + "</title><style>" +
-    "@page{size:A4 landscape;margin:8mm 15mm 12mm}*{box-sizing:border-box}body{margin:0;font:10pt Arial,Helvetica,sans-serif;color:#000;background:#fff}" +
-    "main{display:grid;grid-template-columns:1fr 1fr;column-gap:18mm}section{padding-top:2mm}.cab{display:flex;justify-content:space-between;font:9pt Calibri,Arial,sans-serif;margin-bottom:9mm}" +
-    "h1{font-size:10pt;text-align:center;text-decoration:underline;margin:0 0 5mm}h1 b{font-size:12pt}.datos{border-collapse:collapse;width:100%}.datos td{padding:0 2px;vertical-align:top}.datos .b{font-weight:bold}.k{width:30mm}.dp{width:6mm}" +
-    ".ds{text-decoration:underline;margin:4mm 0 1mm}ul{margin:0;padding-left:9mm}li{text-align:justify}.vel{display:block}" +
-    ".fecha{text-align:right;margin:4mm 0 9mm}.firma{text-align:center;margin:0 0 14mm}.firma div:nth-child(3){font-weight:bold}.firma.f1{margin-left:35%}" +
-    "@media screen{body{background:#e8ebf0}main{width:297mm;margin:10px auto;background:#fff;padding:8mm 15mm;box-shadow:0 2px 12px #0003}}" +
-    "</style></head><body><main>" + copia + copia + "</main></body></html>";
+// Dibuja (o solo mide, si dibujar=false) una copia en la columna que empieza en x0. Devuelve la altura final (mm).
+function copiaOrdenPDF(doc, T, x0, fs, dibujar) {
+  const W = OM.col, lh = fs * 0.3528 * 1.15, mm = (pt) => pt * 0.3528;
+  let y = OM.arriba;
+  const fuente = (estilo, tam) => { doc.setFont("helvetica", estilo); doc.setFontSize(tam || fs); };
+  const txt = (s, x, yy, op) => { if (dibujar) doc.text(pdfTxt(s), x, yy, op); };
+  const subraya = (x, yy, ancho) => { if (dibujar) { doc.setLineWidth(0.2); doc.line(x, yy + 0.7, x + ancho, yy + 0.7); } };
+  const anchoDe = (s) => doc.getTextWidth(pdfTxt(s));
+  const partir = (s, ancho) => doc.splitTextToSize(pdfTxt(s), ancho);
+  const justificada = (linea, x, yy, ancho, ultima) => {
+    const pal = linea.split(" ").filter(Boolean);
+    if (ultima || pal.length < 2) return txt(linea, x, yy);
+    const libre = (ancho - pal.reduce((s, p) => s + anchoDe(p), 0)) / (pal.length - 1);
+    let xx = x; pal.forEach((p) => { txt(p, xx, yy); xx += anchoDe(p) + libre; });
+  };
+  // Título
+  y += lh + mm(10);
+  fuente("bold"); const t1 = "ORDEN DE MISION FAP N° ", w1 = anchoDe(t1);
+  fuente("bold", fs * 1.2); const t2 = T.NUMERO + "- " + T.ANIO, w2 = anchoDe(t2);
+  const xt = x0 + (W - w1 - w2) / 2; y += lh * 1.1;
+  fuente("bold"); txt(t1, xt, y); fuente("bold", fs * 1.2); txt(t2, xt + w1, y); subraya(xt, y, w1 + w2);
+  y += mm(10);
+  // Datos
+  const xDos = x0 + 37.5, xVal = x0 + 44.5, wVal = W - 44.5;
+  [["CONDUCTOR", T.CONDUCTOR, true], ["VEHICULO", T.VEHICULO, true], ["INICIO", T.INICIO], ["TERMINO", T.TERMINO], ["COMBUSTIBLE", T.COMBUSTIBLE], ["DESTINO", T.DESTINO], ["JUSTIFICACION", T.JUSTIFICACION]]
+    .forEach(([k, v, negrita]) => {
+      fuente(negrita ? "bold" : "normal");
+      const lineas = partir(v || " ", wVal);
+      y += lh; txt(k, x0, y); txt(":", xDos, y);
+      lineas.forEach((l, i) => { if (i) y += lh; txt(l, xVal, y); });
+    });
+  y += lh;
+  // Disposiciones
+  fuente("normal"); y += lh; txt("DISPOSICIONES DE SEGURIDAD:", x0, y); subraya(x0, y, anchoDe("DISPOSICIONES DE SEGURIDAD:"));
+  const xBala = x0 + 6.3, xTxt = x0 + 12.6, wTxt = W - 12.6;
+  DISPOSICIONES.forEach((d, i) => {
+    const lineas = partir(d, wTxt);
+    lineas.forEach((l, j) => { y += lh; if (!j) txt("•", xBala, y); justificada(l, xTxt, y, wTxt, j === lineas.length - 1); });
+    if (i === 1) { y += lh; txt("MAXIMA DENTRO DE LA CIUDAD.... 40 KM/H", xTxt, y); y += lh; txt("MAXIMA FUERA DE LA CIUDAD.... 90 KM/H", xTxt, y); }
+  });
+  // Fecha
+  y += lh; y += lh; txt(T.LUGAR + ", " + T.FECHA + ".", x0 + W, y, { align: "right" });
+  // Firmas
+  const firma = (n, cx) => ["CARGO", "GRADO", "NOMBRE", "CIP"].forEach((k, i) => { fuente(k === "NOMBRE" ? "bold" : "normal"); y += lh; txt(T["F" + n + "_" + k], cx, y, { align: "center" }); });
+  y += lh * 2; firma(1, x0 + W * 0.66);
+  y += lh * 3; firma(2, x0 + W * 0.42);
+  return y + mm(3);
 }
-function imprimirOrden(o) {
-  const viejo = document.getElementById("marco-impresion"); if (viejo) viejo.remove();
-  const f = el("iframe", { id: "marco-impresion", title: "Orden para imprimir", style: "position:fixed;right:0;bottom:0;width:0;height:0;border:0" });
-  document.body.append(f);
-  const d = f.contentWindow.document; d.open(); d.write(htmlOrden(o)); d.close();
-  setTimeout(() => { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { toast("No se pudo abrir la impresión: usa el botón Word.", "bad"); } }, 300);
+async function descargarOrdenPDF(o) {
+  try {
+    const jsPDF = await cargarJsPDF();
+    const T = G.textosOrden(o);
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
+    // Tamaño de letra: 10 pt como el formato; si algún texto es largo, se reduce hasta que todo entre en una hoja.
+    let fs = 10;
+    while (fs > 7 && copiaOrdenPDF(doc, T, OM.izq, fs, false) > OM.alto - OM.abajo) fs -= 0.25;
+    [OM.izq, OM.izq + OM.col + OM.sep].forEach((x0) => {
+      doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+      doc.text("GRUPO AEREO N° 7", x0, OM.cab); doc.text("ESC. BASE AEREA N° 707", x0 + OM.col, OM.cab, { align: "right" });
+      copiaOrdenPDF(doc, T, x0, fs, true);
+    });
+    doc.setProperties({ title: "Orden de Mision FAP N° " + T.NUMERO + "-" + T.ANIO, subject: "Orden de movimiento", creator: "Control de Transportes GRUP7" });
+    doc.save(nombreArchivoOrden(o) + ".pdf");
+    toast("PDF descargado: ábrelo e imprímelo (A4 horizontal, 2 copias en una hoja).", "ok", 6000);
+    return doc;
+  } catch (e) { toast(e.message, "bad", 6000); }
 }
 
 // ================================================================ JEFE: Personal y avisos

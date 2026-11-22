@@ -12,11 +12,20 @@ const Store = (function () {
   class ErrorApp extends Error { constructor(msg, extra) { super(msg); Object.assign(this, extra || {}); } }
 
   // ------------------------------------------------------------------ modo demo
+  // Datos de ejemplo para la Orden de Movimiento (los reales viven solo en el servidor).
+  function demoOrdenes(d) {
+    if (!d.Conductores || !d.Conductores.length) d.Conductores = d.Personal.filter((p) => p.rol === "chofer").map((p) => ({ id: p.id, nombre_doc: "CON. FAP " + p.nombre.toUpperCase() + " (DEMO)", persona_id: p.id, activo: true }));
+    d.Config = d.Config || [];
+    const f = { f1_cargo: "EL CMDTE DEL ESC. DE BASE AÉREA Nº707", f1_grado: "Capitán FAP", f1_nombre: "NOMBRE DE EJEMPLO", f1_cip: "O-0000000-O+",
+      f2_cargo: "EL COMANDANTE DEL GRUPO AÉREO N° 7", f2_grado: "Coronel FAP", f2_nombre: "NOMBRE DE EJEMPLO", f2_cip: "O-0000000-O+" };
+    Object.keys(f).forEach((k) => { if (!d.Config.some((c) => c.id === "om_" + k)) d.Config.push({ id: "om_" + k, valor: f[k] }); });
+  }
   function semillaDemo() {
     const d = {};
     Object.keys(GRUP7.TABLAS).forEach((t) => (d[t] = []));
     d.Vehiculos = clone(GRUP7.SEMILLA_VEHICULOS);
     d.Personal = clone(GRUP7.SEMILLA_PERSONAL);
+    demoOrdenes(d);
     const km = { AGRALE: 182340, ISOTERMICO: 96410, DONGFENG: 74120, COUNTY: 151880, COASTER: 203115, HIACE: 128870, AMAROK: 88452, HILUX: 112300, KIARIO: 45210, VERSA: 61005 };
     d.Vehiculos.forEach((v) => (v.km_actual = km[v.id]));
     // Comisiones de ejemplo para que el tablero no esté vacío (solo existen en modo demo).
@@ -55,6 +64,7 @@ const Store = (function () {
     if (demoData) return demoData;
     try { demoData = JSON.parse(ls.get(K.db) || "null"); } catch { demoData = null; }
     if (!demoData) { demoData = semillaDemo(); demoGuardar(); }
+    else if (!demoData.Conductores || !demoData.Conductores.length) { demoOrdenes(demoData); demoGuardar(); }
     return demoData;
   }
   function demoGuardar() { ls.set(K.db, JSON.stringify(demoData)); }
