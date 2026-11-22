@@ -17,7 +17,7 @@ var GRUP7 = (function () {
     Combustible: ["id", "fecha", "vehiculo_id", "combustible", "galones", "km_odometro", "vale", "comision_id", "registrado_por", "creado"],
     Eventos: ["id", "ts", "tipo", "para", "texto", "comision_id"],
     Config: ["id", "valor"],
-    Conductores: ["id", "nombre_doc", "persona_id", "activo"],
+    Conductores: ["id", "nombre_doc", "persona_id", "activo", "nsa"],
     Ordenes: ["id", "numero", "anio", "comision_id", "vehiculo_id", "chofer_id", "conductor", "vehiculo", "inicio", "termino", "galones", "combustible", "destino", "justificacion", "lugar", "fecha_emision",
       "f1_cargo", "f1_grado", "f1_nombre", "f1_cip", "f2_cargo", "f2_grado", "f2_nombre", "f2_cip", "creado_por", "creado", "actualizado"],
   };
@@ -724,6 +724,85 @@ var GRUP7 = (function () {
     return o;
   }
 
+  // ---------- Para SIGMA (SISLOG – Módulo de Combustible) ----------
+  // Lee la tabla "Registro de comisión" copiada de SIGMA (pegada como texto).
+  // Fila: RFID  PLACA  RESPONSABLE  GRIFO  DD/MM/AAAA  CANT  COMBUSTIBLE  CANT_COMISION  RESOLUCION
+  const RE_PLACA = "[A-Z0-9]{2,3}-[0-9]{3,4}";
+  function combustibleSIGMA(s) { return /GASOHOL|GASOLINA/i.test(s) ? "GASOHOL" : "PETROLEO"; }
+  function parsearDespachosSIGMA(texto) {
+    const re = new RegExp("(" + RE_PLACA + ")\\s+.*?(\\d{2})\\/(\\d{2})\\/(\\d{4})\\s+([\\d.,]+)\\s+([A-ZÁÉÍÓÚÑ ()]+?)\\s+([\\d.,]+)", "i");
+    const out = [], vistos = {};
+    String(texto || "").split(/\r?\n/).forEach(function (linea) {
+      const l = linea.replace(/\t/g, " ").trim();
+      const m = re.exec(l);
+      if (!m) return;
+      const d = { placa: m[1].toUpperCase(), fecha: m[4] + "-" + m[3] + "-" + m[2], galones: num(m[5].replace(",", ".")),
+        tipo: m[6].trim().toUpperCase(), combustible: combustibleSIGMA(m[6]), asignado: num(m[7].replace(",", ".")) };
+      d.pendiente = r1(Math.max(0, d.galones - d.asignado));
+      const k = d.placa + d.fecha + d.galones + d.tipo + d.asignado;
+      if (vistos[k]) { vistos[k]++; d.repetido = vistos[k]; } else vistos[k] = 1;
+      out.push(d);
+    });
+    return out.sort(function (a, b) { return (a.placa + a.fecha).localeCompare(b.placa + b.fecha); });
+  }
+  // Reparte un total en enteros proporcionales a los pesos, sin que la suma cambie (mayor resto).
+  function repartirEnteros(total, pesos) {
+    const T = Math.round(num(total)), S = pesos.reduce(function (s, p) { return s + Math.max(0, num(p)); }, 0);
+    if (!pesos.length) return [];
+    const base = pesos.map(function (p) { return S > 0 ? Math.max(0, num(p)) * T / S : T / pesos.length; });
+    const ent = base.map(Math.floor);
+    let falta = T - ent.reduce(function (s, x) { return s + x; }, 0);
+    base.map(function (b, i) { return { i: i, r: b - ent[i] }; }).sort(function (a, b) { return b.r - a.r; })
+      .forEach(function (x) { if (falta > 0) { ent[x.i]++; falta--; } });
+    return ent;
+  }
+  // Km de una comisión: odómetro si existe; si no, ida y vuelta según destino o zona.
+  const KM_ZONA = { URBANO: 20, AFUERAS: 120, TROCHA: 300 };
+  function kmComision(c) {
+    if (num(c.km_recorridos) > 0) return { km: num(c.km_recorridos), real: true };
+    const d = destinoPreset(c.destino);
+    return { km: d ? d.km * 2 : KM_ZONA[c.zona] || 20, real: false };
+  }
+  function textoComisionSIGMA(c) {
+    return mayus([c.motivo || "COMISIÓN DE SERVICIO", c.destino ? "(" + c.destino + ")" : "", c.solicitante ? "- " + c.solicitante : ""].filter(Boolean).join(" ")).slice(0, 150);
+  }
+  // Comisiones cubiertas por un despacho: misma placa, desde la fecha del despacho hasta el siguiente despacho del mismo combustible.
+  function repartoDespacho(d, despachos, comisiones, vehiculos, conductores) {
+    const veh = vehiculos.filter(function (v) { return mayus(v.placa) === d.placa; })[0] || null;
+    const sig = despachos.filter(function (x) { return x !== d && x.placa === d.placa && x.combustible === d.combustible && x.fecha > d.fecha; })
+      .sort(function (a, b) { return a.fecha.localeCompare(b.fecha); })[0];
+    const coms = !veh ? [] : comisiones.filter(function (c) {
+      return c.vehiculo_id === veh.id && c.estado !== "CANCELADA" && c.fecha >= d.fecha && (!sig || c.fecha < sig.fecha);
+    }).sort(function (a, b) { return (a.fecha + a.hora_salida).localeCompare(b.fecha + b.hora_salida); });
+    const kms = coms.map(kmComision);
+    const gal = repartirEnteros(d.pendiente, kms.map(function (k) { return k.km; }));
+    const porPersona = {};
+    (conductores || []).forEach(function (x) { if (x.persona_id) porPersona[x.persona_id] = x; });
+    return {
+      vehiculo: veh, hasta: sig ? sig.fecha : "",
+      lineas: coms.map(function (c, i) {
+        const cd = porPersona[c.chofer_id] || {};
+        return { comision: c, km: kms[i].km, km_real: kms[i].real, galones: gal[i], nsa: cd.nsa || "", responsable: cd.nombre_doc || "", observacion: textoComisionSIGMA(c) };
+      }),
+    };
+  }
+  // Galones sugeridos para cargar a cada RFID según las comisiones programadas en un rango de fechas.
+  function sugerenciaRFID(desde, hasta, comisiones, vehiculos) {
+    const porVeh = {};
+    comisiones.forEach(function (c) {
+      if (c.estado === "CANCELADA" || c.estado === "RETORNADA" || c.fecha < desde || c.fecha > hasta) return;
+      const v = vehiculos.filter(function (x) { return x.id === c.vehiculo_id; })[0];
+      if (!v || !(num(v.km_gl) > 0)) return;
+      const x = porVeh[v.id] = porVeh[v.id] || { vehiculo: v, comisiones: 0, km: 0 };
+      x.comisiones++; x.km += kmComision(c).km;
+    });
+    return Object.keys(porVeh).map(function (k) {
+      const x = porVeh[k];
+      x.galones = Math.ceil(x.km * 1.1 / num(x.vehiculo.km_gl));
+      return x;
+    }).sort(function (a, b) { return b.galones - a.galones; });
+  }
+
   H.guardar_orden = function (ctx, body) {
     permiso(ctx, ROLES_ORDEN);
     const e = body.orden || {};
@@ -825,7 +904,9 @@ var GRUP7 = (function () {
     validarComision: validarComision, eventosPara: eventosPara, destinatarios: destinatarios, publico: publico,
     H: H, Jobs: Jobs, ejecutar: ejecutar, falla: falla, num: num, norm: norm,
     ROLES_ORDEN: ROLES_ORDEN, fechaOrden: fechaOrden, fechaEmision: fechaEmision, combustibleOrden: combustibleOrden, galonesSugeridos: galonesSugeridos,
-    siguienteNumero: siguienteNumero, numeroOrden: numeroOrden, textosOrden: textosOrden, lineasExtraOrden: lineasExtraOrden, MAX_LINEAS_EXTRA: MAX_LINEAS_EXTRA, firmasOM: firmasOM, CLAVES_FIRMA: CLAVES_FIRMA, vehiculoOrden: vehiculoOrden, borradorOrden: borradorOrden, destinoPreset: destinoPreset,
+    siguienteNumero: siguienteNumero, numeroOrden: numeroOrden, textosOrden: textosOrden, lineasExtraOrden: lineasExtraOrden, MAX_LINEAS_EXTRA: MAX_LINEAS_EXTRA, firmasOM: firmasOM, CLAVES_FIRMA: CLAVES_FIRMA, vehiculoOrden: vehiculoOrden,
+    parsearDespachosSIGMA: parsearDespachosSIGMA, repartirEnteros: repartirEnteros, kmComision: kmComision, textoComisionSIGMA: textoComisionSIGMA,
+    repartoDespacho: repartoDespacho, sugerenciaRFID: sugerenciaRFID, borradorOrden: borradorOrden, destinoPreset: destinoPreset,
   };
   return api;
 })();

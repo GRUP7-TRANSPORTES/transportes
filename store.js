@@ -14,7 +14,7 @@ const Store = (function () {
   // ------------------------------------------------------------------ modo demo
   // Datos de ejemplo para la Orden de Movimiento (los reales viven solo en el servidor).
   function demoOrdenes(d) {
-    if (!d.Conductores || !d.Conductores.length) d.Conductores = d.Personal.filter((p) => p.rol === "chofer").map((p) => ({ id: p.id, nombre_doc: "CON. FAP " + p.nombre.toUpperCase() + " (DEMO)", persona_id: p.id, activo: true }));
+    if (!d.Conductores || !d.Conductores.length) d.Conductores = d.Personal.filter((p) => p.rol === "chofer").map((p, i) => ({ id: p.id, nombre_doc: "CON. FAP " + p.nombre.toUpperCase() + " (DEMO)", persona_id: p.id, activo: true, nsa: "DEMO" + (101 + i) }));
     d.Config = d.Config || [];
     const f = { f1_cargo: "EL CMDTE DEL ESC. DE BASE AÉREA Nº707", f1_grado: "Capitán FAP", f1_nombre: "NOMBRE DE EJEMPLO", f1_cip: "O-0000000-O+",
       f2_cargo: "EL COMANDANTE DEL GRUPO AÉREO N° 7", f2_grado: "Coronel FAP", f2_nombre: "NOMBRE DE EJEMPLO", f2_cip: "O-0000000-O+" };

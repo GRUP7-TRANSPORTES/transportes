@@ -231,13 +231,14 @@ const TABS = {
   agenda: ["Mi agenda", () => vAgenda()],
   papeletas: ["Papeletas y combustible", () => vPapeletas()],
   ordenes: ["Órdenes de movimiento", () => vOrdenes()],
+  sigma: ["Para SIGMA", () => vSigma()],
   flota: ["Flota", () => vFlota()],
   personal: ["Personal y avisos", () => vPersonal()],
 };
 const POR_ROL = {
-  jefe: ["tablero", "comisiones", "papeletas", "ordenes", "flota", "personal"],
+  jefe: ["tablero", "comisiones", "papeletas", "ordenes", "sigma", "flota", "personal"],
   operaciones: ["comisiones", "flota"],
-  documentario: ["ordenes", "papeletas"],
+  documentario: ["ordenes", "sigma", "papeletas"],
   mantenimiento: ["flota"],
   chofer: ["agenda"],
 };
@@ -1012,6 +1013,80 @@ async function descargarOrdenPDF(o) {
     toast("PDF descargado: ábrelo e imprímelo (A4 horizontal, 2 copias en una hoja).", "ok", 6000);
     return doc;
   } catch (e) { toast(e.message, "bad", 6000); }
+}
+
+// ================================================================ DOCUMENTARIO: Para SIGMA (Módulo de Combustible)
+const K_SIGMA = "grup7_sigma_despachos";
+function leerPegadoSigma() { try { return localStorage.getItem(K_SIGMA) || ""; } catch { return ""; } }
+function guardarPegadoSigma(t) { try { localStorage.setItem(K_SIGMA, t); } catch {} }
+async function copiarDato(t) {
+  try { await navigator.clipboard.writeText(String(t)); toast("Copiado: " + String(t).slice(0, 40), "ok", 1800); }
+  catch { modal("Copiar", el("textarea", { class: "in", rows: 4, value: String(t), onfocus: (e) => e.target.select() })); }
+}
+const btnCopiar = (t, etq) => el("button", { class: "btn ghost", style: "min-height:36px;padding:4px 10px", onclick: () => copiarDato(t), disabled: !t }, etq || "Copiar");
+
+function vSigma() {
+  const texto = leerPegadoSigma();
+  const desp = G.parsearDespachosSIGMA(texto);
+  const pend = desp.filter((d) => d.pendiente > 0);
+  const area = el("textarea", { class: "in", rows: 4, value: texto, placeholder: "Pega aquí la tabla copiada de SIGMA → Distribución → Registro de comisión" });
+  const conductores = S.d.conductores || [];
+  const faltaNsa = conductores.filter((c) => !c.nsa).length;
+  return el("div", null,
+    el("h2", null, "Para SIGMA (Módulo de Combustible)"),
+    el("div", { class: "card" },
+      el("b", null, "1. Registro de comisión: pega los despachos"),
+      el("p", { class: "small mut" }, "En SIGMA: Distribución → Registro de comisión → Mostrar 25. Selecciona la tabla desde la primera fila hasta la última, copia (Ctrl+C) y pégala aquí. Si hay varias páginas, pega una debajo de otra."),
+      area,
+      el("div", { class: "row", style: "margin-top:8px" },
+        el("button", { class: "btn primary", onclick: () => { guardarPegadoSigma(area.value); render(); } }, "Leer despachos"),
+        texto ? el("button", { class: "btn ghost", onclick: () => { guardarPegadoSigma(""); render(); } }, "Borrar") : null,
+        texto ? el("span", { class: "small mut" }, desp.length + " despacho(s) leído(s) · " + pend.length + " con galones por registrar") : null),
+      faltaNsa ? el("p", { class: "small bad" }, "Falta el NSA de " + faltaNsa + " conductor(es): se agrega en la hoja, pestaña Conductores, columna nsa.") : null),
+    texto && !desp.length ? el("div", { class: "alert warn" }, "No se reconoció ningún despacho. Copia la tabla completa (con placa, fecha y galones).") : null,
+    pend.length ? el("div", null, el("h3", null, "Despachos por registrar (" + pend.length + ")"), pend.map((d) => cardDespachoSigma(d, desp))) : null,
+    texto && desp.length && !pend.length ? el("div", { class: "alert info" }, "Todos los despachos pegados ya tienen sus galones registrados en comisiones.") : null,
+    panelRfidSigma());
+}
+function cardDespachoSigma(d, desp) {
+  const r = G.repartoDespacho(d, desp, S.d.comisiones, S.d.vehiculos, S.d.conductores || []);
+  const v = r.vehiculo;
+  const todo = r.lineas.map((l) => [l.nsa || "(sin NSA)", l.observacion, l.galones].join(" | ")).join("\n");
+  return el("div", { class: "card", style: "margin-bottom:10px" },
+    el("div", { class: "row" },
+      el("b", { class: "grow" }, d.placa + " · " + fCorta(d.fecha) + " · " + d.galones + " gl " + d.tipo),
+      tag("Por registrar: " + d.pendiente + " gl", "t-bad")),
+    el("p", { class: "small" }, (v ? v.nombre : "Placa no está en la flota de la app") + (d.asignado ? " · ya registrado en SIGMA: " + d.asignado + " gl (revisa qué comisiones faltan)" : "") +
+      " · comisiones desde el " + fCorta(d.fecha) + (r.hasta ? " hasta antes del " + fCorta(r.hasta) : " en adelante")),
+    r.lineas.length ? el("div", { class: "scroll-x" }, el("table", { class: "t" },
+      el("thead", null, el("tr", null, el("th", null, "Fecha"), el("th", null, "NSA"), el("th", null, "Responsable"), el("th", null, "Observación (comisión)"), el("th", { class: "n" }, "Km"), el("th", { class: "n" }, "Gl"))),
+      el("tbody", null, r.lineas.map((l) => el("tr", null,
+        el("td", null, fCorta(l.comision.fecha).slice(0, 5)),
+        el("td", null, l.nsa ? el("div", null, l.nsa, " ", btnCopiar(l.nsa)) : tag("Sin NSA", "t-bad")),
+        el("td", { class: "small" }, l.responsable || (per(l.comision.chofer_id) || {}).nombre || ""),
+        el("td", null, el("div", { class: "small" }, l.observacion), btnCopiar(l.observacion)),
+        el("td", { class: "n" }, fmt(l.km, 0) + (l.km_real ? "" : "*")),
+        el("td", { class: "n strong" }, l.galones, " ", btnCopiar(l.galones))))))) : vacio("No hay comisiones de esta unidad en la app para ese periodo. Revisa que estén registradas."),
+    r.lineas.length ? el("p", { class: "small mut" }, "* km aproximados (sin odómetro): ida y vuelta según destino. Los galones se reparten según los km y suman exactamente " + d.pendiente + " gl.") : null,
+    r.lineas.length ? el("div", { class: "row" }, btnCopiar(todo, "Copiar todo")) : null);
+}
+function panelRfidSigma() {
+  const h = hoy(), r = S.rangoRfid || "manana";
+  const rangos = { hoy: [h, h, "Hoy"], manana: [G.sumarDias(h, 1), G.sumarDias(h, 1), "Mañana"], semana: [h, G.sumarDias(h, 6), "7 días"] };
+  const [desde, hasta] = rangos[r];
+  const sug = G.sugerenciaRFID(desde, hasta, S.d.comisiones, S.d.vehiculos);
+  const tot = { PETROLEO: 0, GASOHOL: 0 };
+  sug.forEach((x) => (tot[x.vehiculo.combustible] += x.galones));
+  return el("div", { class: "card", style: "margin-top:14px" },
+    el("b", null, "2. Asignaciones a RFID: cuánto cargar a cada vehículo"),
+    el("p", { class: "small mut" }, "Según las comisiones programadas (km aproximados + 10 %). En SIGMA: Distribución → Asignaciones departamentos → Distribuir combustible."),
+    el("div", { class: "chips" }, Object.keys(rangos).map((k) => el("button", { class: "chip", "aria-pressed": k === r ? "true" : "false", onclick: () => { S.rangoRfid = k; render(); } }, rangos[k][2]))),
+    sug.length ? el("div", { class: "scroll-x", style: "margin-top:8px" }, el("table", { class: "t" },
+      el("thead", null, el("tr", null, el("th", null, "Placa"), el("th", null, "Unidad"), el("th", null, "Combustible"), el("th", { class: "n" }, "Comisiones"), el("th", { class: "n" }, "Km aprox."), el("th", { class: "n" }, "Galones"))),
+      el("tbody", null, sug.map((x) => el("tr", null, el("td", { class: "strong" }, x.vehiculo.placa || "—", " ", btnCopiar(x.vehiculo.placa)), el("td", null, x.vehiculo.nombre),
+        el("td", null, x.vehiculo.combustible === "GASOHOL" ? "Gasohol Regular" : "Bio Diésel"), el("td", { class: "n" }, x.comisiones), el("td", { class: "n" }, fmt(x.km, 0)), el("td", { class: "n strong" }, x.galones, " ", btnCopiar(x.galones)))),
+        el("tr", { style: "font-weight:800" }, el("td", { colspan: 5 }, "Total Bio Diésel / Gasohol"), el("td", { class: "n" }, tot.PETROLEO + " / " + tot.GASOHOL)))))
+      : vacio("No hay comisiones programadas en ese periodo."));
 }
 
 // ================================================================ JEFE: Personal y avisos
