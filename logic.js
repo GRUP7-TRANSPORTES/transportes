@@ -4,7 +4,7 @@
 var GRUP7 = (function () {
   "use strict";
 
-  const VERSION = "1.0.0";
+  const VERSION = "1.1.0";
   const OFFSET_MIN = -300; // Perú: UTC-5 fijo, sin horario de verano.
 
   const ROL = { JEFE: "jefe", OPS: "operaciones", DOC: "documentario", MANT: "mantenimiento", CHOFER: "chofer" };
@@ -17,6 +17,8 @@ var GRUP7 = (function () {
     Combustible: ["id", "fecha", "vehiculo_id", "combustible", "galones", "km_odometro", "vale", "comision_id", "registrado_por", "creado"],
     Eventos: ["id", "ts", "tipo", "para", "texto", "comision_id"],
     Config: ["id", "valor"],
+    Ordenes: ["id", "numero", "anio", "comision_id", "vehiculo_id", "chofer_id", "conductor", "vehiculo", "inicio", "termino", "galones", "combustible", "destino", "justificacion", "lugar", "fecha_emision",
+      "f1_cargo", "f1_grado", "f1_nombre", "f1_cip", "f2_cargo", "f2_grado", "f2_nombre", "f2_cip", "creado_por", "creado", "actualizado"],
   };
 
   const COMBUSTIBLE_NOMBRE = { PETROLEO: "Petróleo", GASOHOL: "Gasohol Regular" };
@@ -28,15 +30,16 @@ var GRUP7 = (function () {
   const ZONA = { URBANO: "Piura urbano", AFUERAS: "Afueras de Piura", TROCHA: "Trocha / sierra" };
   const EJE = { URBANO: "Urbano", NORTE: "Norte (Sullana–Talara)", NORESTE: "Noreste (Tambogrande–Ayabaca)", ESTE: "Este (Chulucanas–Huancabamba)", SUR: "Sur (Catacaos–Sechura)", OESTE: "Oeste (Paita)" };
 
+  // [nombre, zona, eje, km aproximados de ida desde la base (para sugerir galones; se pueden corregir en la orden)]
   const DESTINOS = [
-    ["Piura Cercado", "URBANO", "URBANO"], ["Castilla", "URBANO", "URBANO"], ["Veintiséis de Octubre", "URBANO", "URBANO"],
-    ["Aeropuerto Piura", "URBANO", "URBANO"], ["Hospital / clínica (Piura)", "URBANO", "URBANO"],
-    ["Catacaos", "AFUERAS", "SUR"], ["La Arena", "AFUERAS", "SUR"], ["La Unión", "AFUERAS", "SUR"], ["Sechura", "AFUERAS", "SUR"], ["Bayóvar", "AFUERAS", "SUR"],
-    ["Paita", "AFUERAS", "OESTE"],
-    ["Sullana", "AFUERAS", "NORTE"], ["Talara", "AFUERAS", "NORTE"], ["Máncora", "AFUERAS", "NORTE"],
-    ["Tambogrande", "AFUERAS", "NORESTE"], ["Las Lomas", "AFUERAS", "NORESTE"], ["Ayabaca", "TROCHA", "NORESTE"],
-    ["Chulucanas", "AFUERAS", "ESTE"], ["Morropón", "AFUERAS", "ESTE"], ["Huancabamba", "TROCHA", "ESTE"],
-  ].map(function (d) { return { nombre: d[0], zona: d[1], eje: d[2] }; });
+    ["Piura Cercado", "URBANO", "URBANO", 8], ["Castilla", "URBANO", "URBANO", 5], ["Veintiséis de Octubre", "URBANO", "URBANO", 10],
+    ["Aeropuerto Piura", "URBANO", "URBANO", 3], ["Hospital / clínica (Piura)", "URBANO", "URBANO", 8],
+    ["Catacaos", "AFUERAS", "SUR", 15], ["La Arena", "AFUERAS", "SUR", 28], ["La Unión", "AFUERAS", "SUR", 32], ["Sechura", "AFUERAS", "SUR", 58], ["Bayóvar", "AFUERAS", "SUR", 115],
+    ["Paita", "AFUERAS", "OESTE", 60],
+    ["Sullana", "AFUERAS", "NORTE", 40], ["Talara", "AFUERAS", "NORTE", 120], ["Máncora", "AFUERAS", "NORTE", 190],
+    ["Tambogrande", "AFUERAS", "NORESTE", 52], ["Las Lomas", "AFUERAS", "NORESTE", 100], ["Ayabaca", "TROCHA", "NORESTE", 210],
+    ["Chulucanas", "AFUERAS", "ESTE", 62], ["Morropón", "AFUERAS", "ESTE", 85], ["Huancabamba", "TROCHA", "ESTE", 215],
+  ].map(function (d) { return { nombre: d[0], zona: d[1], eje: d[2], km: d[3] }; });
 
   // ---------- Datos semilla ----------
   function v(id, nombre, comb, kmgl, pax, carga, tipo, estado, novedad, refri) {
@@ -426,6 +429,7 @@ var GRUP7 = (function () {
       comisiones: com,
       combustible: ctx.yo.rol === ROL.CHOFER ? [] : ctx.db.all("Combustible").filter(function (a) { return a.fecha >= desde; }),
       eventos: eventos,
+      ordenes: ROLES_ORDEN.indexOf(ctx.yo.rol) < 0 ? [] : ctx.db.all("Ordenes").filter(function (o) { return num(o.anio) >= num(hoy.slice(0, 4)) - 1; }),
       yo: publico(ctx.yo),
     };
   };
@@ -642,6 +646,111 @@ var GRUP7 = (function () {
 
   H.leer_avisos = function (ctx) { return { eventos: eventosPara(ctx.yo, ctx.db.all("Eventos")).slice(-60).reverse() }; };
 
+  // ---------- Orden de Movimiento (Orden de Misión FAP) para comisiones fuera de Piura ----------
+  const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+  const ROLES_ORDEN = [ROL.JEFE, ROL.DOC];
+  const CAMPOS_ORDEN = ["conductor", "vehiculo", "galones", "combustible", "destino", "justificacion", "lugar", "f1_cargo", "f1_grado", "f1_nombre", "f1_cip", "f2_cargo", "f2_grado", "f2_nombre", "f2_cip"];
+  function mayus(s) { return String(s == null ? "" : s).toUpperCase(); }
+  // "2026-11-20" → "VIERNES 20 NOVIEMBRE-2026"
+  function fechaOrden(f) { if (!RE_FECHA.test(f || "")) return ""; const d = new Date(f + "T12:00:00Z"); return mayus(DIAS[d.getUTCDay()]) + " " + f.slice(8) + " " + mayus(MESES[d.getUTCMonth()]) + "-" + f.slice(0, 4); }
+  // "2026-11-20" → "20 de noviembre del 2026"
+  function fechaEmision(f) { if (!RE_FECHA.test(f || "")) return ""; return f.slice(8) + " de " + MESES[+f.slice(5, 7) - 1] + " del " + f.slice(0, 4); }
+  function combustibleOrden(gal, comb) { const g = Math.max(0, Math.round(num(gal))); return (g < 10 ? "0" : "") + g + " GLS " + (comb === "GASOHOL" ? "GASOHOL" : "DIESEL"); }
+  function destinoPreset(nombre) { const n = norm(nombre); return DESTINOS.filter(function (d) { return norm(d.nombre) === n; })[0] || null; }
+  // Ida y vuelta + 10 % de margen, redondeado hacia arriba. null si no se conoce la distancia.
+  function galonesSugeridos(destino, veh) {
+    const d = destinoPreset(destino);
+    if (!d || !veh || !(num(veh.km_gl) > 0)) return null;
+    return Math.max(1, Math.ceil(d.km * 2 * 1.1 / num(veh.km_gl)));
+  }
+  function siguienteNumero(ordenes, anio) {
+    return ordenes.filter(function (o) { return String(o.anio) === String(anio); }).reduce(function (m, o) { return Math.max(m, num(o.numero)); }, 0) + 1;
+  }
+  function numeroOrden(o) { const n = Math.round(num(o.numero)); return (n < 10 ? "00" : n < 100 ? "0" : "") + n; }
+  // Datos para llenar la plantilla de Word / la vista de impresión.
+  function textosOrden(o) {
+    return {
+      NUMERO: numeroOrden(o), ANIO: String(o.anio || ""), CONDUCTOR: mayus(o.conductor), VEHICULO: mayus(o.vehiculo),
+      INICIO: fechaOrden(o.inicio), TERMINO: fechaOrden(o.termino || o.inicio), COMBUSTIBLE: combustibleOrden(o.galones, o.combustible),
+      DESTINO: mayus(o.destino), JUSTIFICACION: mayus(o.justificacion), LUGAR: o.lugar || "Castilla", FECHA: fechaEmision(o.fecha_emision),
+      F1_CARGO: o.f1_cargo || "", F1_GRADO: o.f1_grado || "", F1_NOMBRE: o.f1_nombre || "", F1_CIP: o.f1_cip || "",
+      F2_CARGO: o.f2_cargo || "", F2_GRADO: o.f2_grado || "", F2_NOMBRE: o.f2_nombre || "", F2_CIP: o.f2_cip || "",
+    };
+  }
+  // El formato llena la hoja exacta: si un dato ocupa más de 1 línea hay que quitar renglones en blanco.
+  // Letras por línea medidas en Word (Arial 10, columna de media hoja A4 horizontal), con margen de seguridad.
+  const MAX_LINEAS_EXTRA = 4;
+  function lineasExtraOrden(T) {
+    function extra(s, primera, siguientes) { const n = String(s || "").length; return n <= primera ? 0 : Math.ceil((n - primera) / siguientes); }
+    return extra(T.CONDUCTOR, 28, 48) + extra(T.VEHICULO, 33, 48) + extra(T.DESTINO, 34, 50) + extra(T.JUSTIFICACION, 34, 50) +
+      extra(T.F1_CARGO, 46, 46) + extra(T.F2_CARGO, 46, 46) + extra(T.F1_NOMBRE, 40, 40) + extra(T.F2_NOMBRE, 40, 40);
+  }
+  // Borrador: toma la comisión y recuerda lo último escrito (nombre completo del chofer, placa, firmas).
+  function borradorOrden(c, vehiculos, personal, ordenes, hoy) {
+    const prev = ordenes.slice().sort(function (a, b) { return String(b.creado).localeCompare(String(a.creado)); });
+    const ult = prev[0] || {};
+    const veh = c ? mapa(vehiculos)[c.vehiculo_id] : null;
+    const ch = c ? mapa(personal)[c.chofer_id] : null;
+    const delVeh = c && prev.filter(function (o) { return o.vehiculo_id === c.vehiculo_id && o.vehiculo; })[0];
+    const delCh = c && prev.filter(function (o) { return o.chofer_id === c.chofer_id && o.conductor; })[0];
+    const anio = +(c ? c.fecha : hoy).slice(0, 4);
+    const o = {
+      id: "", numero: siguienteNumero(ordenes, anio), anio: anio, comision_id: c ? c.id : "", vehiculo_id: c ? c.vehiculo_id : "", chofer_id: c ? c.chofer_id : "",
+      conductor: delCh ? delCh.conductor : ch ? mayus(ch.nombre) : "", vehiculo: delVeh ? delVeh.vehiculo : veh ? mayus(veh.nombre) : "",
+      inicio: c ? c.fecha : hoy, termino: c ? c.fecha : hoy, galones: "", combustible: veh ? veh.combustible : "PETROLEO",
+      destino: c ? "GRUP7 – " + mayus(c.destino) + " – GRUP7" : "", justificacion: c ? mayus("COMISIÓN " + [c.motivo, c.solicitante].filter(Boolean).join(" – ")) : "",
+      lugar: ult.lugar || "Castilla", fecha_emision: hoy,
+    };
+    // Cargos por defecto (los del formato); nombres y CIP los escribe Documentario la primera vez y luego se recuerdan.
+    const porDefecto = { f1_cargo: "EL CMDTE DEL ESC. DE BASE AÉREA Nº707", f1_grado: "Capitán FAP", f2_cargo: "EL COMANDANTE DEL GRUPO AÉREO N° 7", f2_grado: "Coronel FAP" };
+    ["f1_cargo", "f1_grado", "f1_nombre", "f1_cip", "f2_cargo", "f2_grado", "f2_nombre", "f2_cip"].forEach(function (k) { o[k] = ult[k] || porDefecto[k] || ""; });
+    const sug = c ? galonesSugeridos(c.destino, veh) : null;
+    if (sug) o.galones = sug;
+    return o;
+  }
+
+  H.guardar_orden = function (ctx, body) {
+    permiso(ctx, ROLES_ORDEN);
+    const e = body.orden || {};
+    const o = {};
+    CAMPOS_ORDEN.forEach(function (k) { o[k] = txt(e[k], k === "justificacion" || k === "destino" ? 200 : 80); });
+    o.combustible = o.combustible === "GASOHOL" ? "GASOHOL" : "PETROLEO";
+    o.galones = r1(num(e.galones));
+    o.numero = Math.round(num(e.numero));
+    o.anio = Math.round(num(e.anio));
+    o.inicio = e.inicio; o.termino = e.termino || e.inicio; o.fecha_emision = e.fecha_emision || fechaLima(ctx.now);
+    if (!(o.numero > 0)) throw falla("Escribe el número de la orden");
+    if (!(o.anio >= 2020 && o.anio <= 2100)) throw falla("Año no válido");
+    if (!RE_FECHA.test(o.inicio || "") || !RE_FECHA.test(o.termino || "") || !RE_FECHA.test(o.fecha_emision || "")) throw falla("Revisa las fechas");
+    if (o.termino < o.inicio) throw falla("La fecha de término no puede ser antes del inicio");
+    if (!o.conductor) throw falla("Escribe el conductor (grado y nombre)");
+    if (!o.vehiculo) throw falla("Escribe el vehículo y su placa");
+    if (!o.destino) throw falla("Escribe el destino");
+    if (!o.justificacion) throw falla("Escribe la justificación");
+    if (!(o.galones > 0 && o.galones <= 300)) throw falla("Galones no válidos");
+    if (lineasExtraOrden(textosOrden(o)) > MAX_LINEAS_EXTRA) throw falla("El texto es muy largo para que la orden entre en una hoja: acorta la justificación o el destino.");
+    const id = txt(e.id, 60);
+    const repetida = ctx.db.all("Ordenes").filter(function (x) { return x.id !== id && String(x.anio) === String(o.anio) && num(x.numero) === o.numero; })[0];
+    if (repetida) throw falla("Ya existe la Orden N° " + numeroOrden(o) + "–" + o.anio + " (" + repetida.destino + "). Usa otro número.");
+    const cid = txt(e.comision_id, 60);
+    if (cid) {
+      const c = buscar(ctx, "Comisiones", cid);
+      o.comision_id = c.id; o.vehiculo_id = c.vehiculo_id; o.chofer_id = c.chofer_id;
+    } else { o.comision_id = ""; o.vehiculo_id = txt(e.vehiculo_id, 40); o.chofer_id = txt(e.chofer_id, 40); }
+    const ahora = ctx.now.toISOString();
+    o.actualizado = ahora;
+    let out;
+    if (id) { buscar(ctx, "Ordenes", id); out = ctx.db.update("Ordenes", id, o); }
+    else out = ctx.db.insert("Ordenes", Object.assign({ id: ctx.uid(), creado_por: ctx.yo.id, creado: ahora }, o));
+    return { orden: out };
+  };
+  H.borrar_orden = function (ctx, body) {
+    permiso(ctx, ROLES_ORDEN);
+    buscar(ctx, "Ordenes", body.id);
+    ctx.db.remove("Ordenes", body.id);
+    return { ok: true };
+  };
+
   // ---------- Tareas automáticas (activador cada 5 min en el servidor; temporizador en modo demo) ----------
   const Jobs = {};
   Jobs.recordatorios = function (ctx) {
@@ -698,6 +807,8 @@ var GRUP7 = (function () {
     calcularKm: calcularKm, resumen: resumen, textoParte: textoParte, lineaComision: lineaComision, etiquetaCarga: etiquetaCarga, mapa: mapa,
     validarComision: validarComision, eventosPara: eventosPara, destinatarios: destinatarios, publico: publico,
     H: H, Jobs: Jobs, ejecutar: ejecutar, falla: falla, num: num, norm: norm,
+    ROLES_ORDEN: ROLES_ORDEN, fechaOrden: fechaOrden, fechaEmision: fechaEmision, combustibleOrden: combustibleOrden, galonesSugeridos: galonesSugeridos,
+    siguienteNumero: siguienteNumero, numeroOrden: numeroOrden, textosOrden: textosOrden, lineasExtraOrden: lineasExtraOrden, MAX_LINEAS_EXTRA: MAX_LINEAS_EXTRA, borradorOrden: borradorOrden, destinoPreset: destinoPreset,
   };
   return api;
 })();

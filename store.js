@@ -60,11 +60,11 @@ const Store = (function () {
   function demoGuardar() { ls.set(K.db, JSON.stringify(demoData)); }
   function memDB(d) {
     return {
-      all: (t) => d[t].map((o) => Object.assign({}, o)),
-      get: (t, id) => { const x = d[t].find((o) => o.id === id); return x ? Object.assign({}, x) : null; },
-      insert: (t, o) => { const x = Object.assign({}, o); d[t].push(x); return Object.assign({}, x); },
-      update: (t, id, p) => { const x = d[t].find((o) => o.id === id); if (!x) throw new Error("No encontrado: " + id); Object.assign(x, p); return Object.assign({}, x); },
-      remove: (t, id) => { d[t] = d[t].filter((o) => o.id !== id); },
+      all: (t) => (d[t] || []).map((o) => Object.assign({}, o)),
+      get: (t, id) => { const x = (d[t] || []).find((o) => o.id === id); return x ? Object.assign({}, x) : null; },
+      insert: (t, o) => { const x = Object.assign({}, o); (d[t] = d[t] || []).push(x); return Object.assign({}, x); },
+      update: (t, id, p) => { const x = (d[t] || []).find((o) => o.id === id); if (!x) throw new Error("No encontrado: " + id); Object.assign(x, p); return Object.assign({}, x); },
+      remove: (t, id) => { d[t] = (d[t] || []).filter((o) => o.id !== id); },
     };
   }
   async function sha256(s) {
