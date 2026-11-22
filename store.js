@@ -27,7 +27,7 @@ const Store = (function () {
     d.Personal = clone(GRUP7.SEMILLA_PERSONAL);
     demoOrdenes(d);
     const km = { AGRALE: 182340, ISOTERMICO: 96410, DONGFENG: 74120, COUNTY: 151880, COASTER: 203115, HIACE: 128870, AMAROK: 88452, HILUX: 112300, KIARIO: 45210, VERSA: 61005 };
-    d.Vehiculos.forEach((v) => (v.km_actual = km[v.id]));
+    d.Vehiculos.forEach((v, i) => { v.km_actual = km[v.id]; v.placa = "DEM-" + (101 + i); }); // placas de ejemplo; las reales están en el servidor
     // Comisiones de ejemplo para que el tablero no esté vacío (solo existen en modo demo).
     const ahora = new Date();
     const hoy = GRUP7.fechaLima(ahora), man = GRUP7.sumarDias(hoy, 1);

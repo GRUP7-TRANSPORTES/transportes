@@ -11,7 +11,7 @@ var GRUP7 = (function () {
   const ROL_NOMBRE = { jefe: "Jefe de Departamento", operaciones: "Operaciones", documentario: "Parte Documentario", mantenimiento: "Mantenimiento", chofer: "Chofer" };
 
   const TABLAS = {
-    Vehiculos: ["id", "nombre", "combustible", "km_gl", "cap_pax", "cap_carga_t", "tipo", "refrigerado", "estado", "novedad", "km_actual", "actualizado", "actualizado_por"],
+    Vehiculos: ["id", "nombre", "combustible", "km_gl", "cap_pax", "cap_carga_t", "tipo", "refrigerado", "estado", "novedad", "km_actual", "actualizado", "actualizado_por", "placa"],
     Personal: ["id", "nombre", "grado", "rol", "pin_hash", "pin_sal", "telegram_chat_id", "tg_codigo", "tg_codigo_exp", "activo"],
     Comisiones: ["id", "fecha", "hora_salida", "hora_retorno", "destino", "zona", "eje", "servicio", "pasajeros", "carga_tipo", "carga_t", "solicitante", "motivo", "vehiculo_id", "chofer_id", "retorno", "estado", "recomendado_id", "override_motivo", "agrupados", "retornos_coord", "detalle_agrupados", "salida_real", "km_salida", "llegada_real", "novedad", "retorno_real", "km_llegada", "km_recorridos", "galones_est", "papeleta", "aviso45", "aviso_retraso", "creado_por", "creado", "actualizado"],
     Combustible: ["id", "fecha", "vehiculo_id", "combustible", "galones", "km_odometro", "vale", "comision_id", "registrado_por", "creado"],
@@ -60,7 +60,7 @@ var GRUP7 = (function () {
   ];
   function p(id, grado, nombre, rol) { return { id: id, nombre: nombre, grado: grado, rol: rol, pin_hash: "", pin_sal: "", telegram_chat_id: "", tg_codigo: "", tg_codigo_exp: "", activo: true }; }
   const SEMILLA_PERSONAL = [
-    p("GARCIA", "Alférez", "Nicolás García", ROL.JEFE),
+    p("GARCIA", "ALF. FAP", "Nicolás García", ROL.JEFE),
     p("VALLEJOS", "TIP", "Vallejos", ROL.OPS),
     p("MUNIVE", "TC3", "Munive", ROL.DOC),
     p("ANDRADE", "TC3", "Andrade", ROL.DOC),
@@ -669,6 +669,8 @@ var GRUP7 = (function () {
   function siguienteNumero(ordenes, anio) {
     return ordenes.filter(function (o) { return String(o.anio) === String(anio); }).reduce(function (m, o) { return Math.max(m, num(o.numero)); }, 0) + 1;
   }
+  // Vehículo como va en la orden: "CAMIÓN ISOTÉRMICO EAH-592" (nombre + placa).
+  function vehiculoOrden(v) { return v ? (mayus(v.nombre) + (v.placa ? " " + mayus(v.placa) : "")).trim() : ""; }
   function numeroOrden(o) { const n = Math.round(num(o.numero)); return (n < 10 ? "00" : n < 100 ? "0" : "") + n; }
   // Datos para llenar la plantilla de Word / la vista de impresión.
   function textosOrden(o) {
@@ -701,12 +703,12 @@ var GRUP7 = (function () {
     const ult = prev[0] || {};
     const veh = c ? mapa(vehiculos)[c.vehiculo_id] : null;
     const ch = c ? mapa(personal)[c.chofer_id] : null;
-    const delVeh = c && prev.filter(function (o) { return o.vehiculo_id === c.vehiculo_id && o.vehiculo; })[0];
+    const delVeh = c && !(veh && veh.placa) && prev.filter(function (o) { return o.vehiculo_id === c.vehiculo_id && o.vehiculo; })[0];
     const delCh = c && prev.filter(function (o) { return o.chofer_id === c.chofer_id && o.conductor; })[0];
     const anio = +(c ? c.fecha : hoy).slice(0, 4);
     const o = {
       id: "", numero: siguienteNumero(ordenes, anio), anio: anio, comision_id: c ? c.id : "", vehiculo_id: c ? c.vehiculo_id : "", chofer_id: c ? c.chofer_id : "",
-      conductor: "", vehiculo: delVeh ? delVeh.vehiculo : veh ? mayus(veh.nombre) : "",
+      conductor: "", vehiculo: delVeh ? delVeh.vehiculo : veh ? vehiculoOrden(veh) : "",
       inicio: c ? c.fecha : hoy, termino: c ? c.fecha : hoy, galones: "", combustible: veh ? veh.combustible : "PETROLEO",
       destino: c ? "GRUP7 – " + mayus(c.destino) + " – GRUP7" : "", justificacion: c ? mayus("COMISIÓN " + [c.motivo, c.solicitante].filter(Boolean).join(" – ")) : "",
       lugar: ult.lugar || "Castilla", fecha_emision: hoy,
@@ -823,7 +825,7 @@ var GRUP7 = (function () {
     validarComision: validarComision, eventosPara: eventosPara, destinatarios: destinatarios, publico: publico,
     H: H, Jobs: Jobs, ejecutar: ejecutar, falla: falla, num: num, norm: norm,
     ROLES_ORDEN: ROLES_ORDEN, fechaOrden: fechaOrden, fechaEmision: fechaEmision, combustibleOrden: combustibleOrden, galonesSugeridos: galonesSugeridos,
-    siguienteNumero: siguienteNumero, numeroOrden: numeroOrden, textosOrden: textosOrden, lineasExtraOrden: lineasExtraOrden, MAX_LINEAS_EXTRA: MAX_LINEAS_EXTRA, firmasOM: firmasOM, CLAVES_FIRMA: CLAVES_FIRMA, borradorOrden: borradorOrden, destinoPreset: destinoPreset,
+    siguienteNumero: siguienteNumero, numeroOrden: numeroOrden, textosOrden: textosOrden, lineasExtraOrden: lineasExtraOrden, MAX_LINEAS_EXTRA: MAX_LINEAS_EXTRA, firmasOM: firmasOM, CLAVES_FIRMA: CLAVES_FIRMA, vehiculoOrden: vehiculoOrden, borradorOrden: borradorOrden, destinoPreset: destinoPreset,
   };
   return api;
 })();

@@ -873,15 +873,24 @@ function formOrden(o) {
     previa();
   } }, el("option", { value: "" }, "— Elige el conductor —"), lista.map((n) => el("option", { value: n, selected: n === F.conductor }, n)), el("option", { value: OTRO, selected: !!F.conductor && !lista.includes(F.conductor) }, "Otro (escribir)"));
   txtCond.hidden = !(F.conductor && !lista.includes(F.conductor));
-  // Vehículo: sugerencias con lo ya usado (con placa) y la flota.
-  const usados = [...new Set((S.d.ordenes || []).map((x) => x.vehiculo).filter(Boolean).concat(S.d.vehiculos.map((x) => x.nombre)))];
-  const dl = el("datalist", { id: "om-vehiculos" }, usados.map((n) => el("option", { value: n })));
+  // Vehículo: lista desplegable de la flota con placa (pestaña Vehiculos, columna placa) u "Otro".
+  const listaVeh = S.d.vehiculos.map((x) => G.vehiculoOrden(x));
+  const txtVeh = input("vehiculo", { placeholder: "Nombre y placa" });
+  const selVeh = el("select", { class: "in", onchange: (e) => {
+    txtVeh.hidden = e.target.value !== OTRO;
+    F.vehiculo = e.target.value === OTRO ? txtVeh.value : e.target.value;
+    if (e.target.value === OTRO) txtVeh.focus();
+    previa();
+  } }, el("option", { value: "" }, "— Elige el vehículo —"),
+    S.d.vehiculos.map((x, i) => el("option", { value: listaVeh[i], selected: listaVeh[i] === F.vehiculo }, listaVeh[i] + (x.estado === "INOPERATIVO" ? " (inoperativo)" : ""))),
+    el("option", { value: OTRO, selected: !!F.vehiculo && !listaVeh.includes(F.vehiculo) }, "Otro (escribir)"));
+  txtVeh.hidden = !(F.vehiculo && !listaVeh.includes(F.vehiculo));
   const f = (k) => F[k] || "—";
   const cuerpo = el("div", null,
     c ? el("p", null, el("b", null, "Comisión: " + fCorta(c.fecha) + " " + c.hora_salida + " · " + c.destino + " · " + (v ? v.nombre : ""))) : null,
     el("div", { class: "fila2" }, campo("N.º de orden", input("numero", { type: "number", inputmode: "numeric", min: 1 })), campo("Año", input("anio", { type: "number", inputmode: "numeric" }))),
     campo("Conductor", el("div", null, selCond, txtCond)),
-    campo("Vehículo y placa", el("div", null, input("vehiculo", { placeholder: "CAMIÓN HINO EAH-592", list: "om-vehiculos" }), dl)),
+    campo("Vehículo y placa", el("div", null, selVeh, txtVeh)),
     el("div", { class: "fila2" }, campo("Inicio", input("inicio", { type: "date" })), campo("Término", input("termino", { type: "date" }))),
     el("div", { class: "fila2" }, campo("Galones", input("galones", { type: "number", inputmode: "decimal", min: 1, step: "1" })),
       campo("Combustible", seg({ PETROLEO: "Diésel", GASOHOL: "Gasohol" }, F.combustible, (k) => { F.combustible = k; previa(); }))),
