@@ -94,6 +94,7 @@ const csv = (filas) => filas.map((f) => f.map((x) => { const s = String(x == nul
 // ---------------------------------------------------------------- estado
 const S = { yo: null, d: null, tab: null, fCom: null, fDoc: null, diaChofer: "hoy", periodo: "hoy", vistos: new Set(), timer: null, primera: true };
 const veh = (id) => S.d.vehiculos.find((v) => v.id === id);
+const nVeh = (v) => v ? v.nombre + (v.placa ? " · " + v.placa : "") : "";
 const per = (id) => S.d.personal.find((p) => p.id === id);
 const choferes = () => S.d.personal.filter((p) => p.rol === R.CHOFER && p.activo);
 const es = (...roles) => roles.includes(S.yo.rol);
@@ -233,16 +234,14 @@ const TABS = {
   tablero: ["Tablero", () => vTablero()],
   comisiones: ["Comisiones", () => vComisiones()],
   agenda: ["Mi agenda", () => vAgenda()],
-  papeletas: ["Papeletas y combustible", () => vPapeletas()],
   ordenes: ["Órdenes de movimiento", () => vOrdenes()],
-  sigma: ["Para SIGMA", () => vSigma()],
   flota: ["Flota", () => vFlota()],
   personal: ["Personal y avisos", () => vPersonal()],
 };
 const POR_ROL = {
-  jefe: ["tablero", "comisiones", "papeletas", "ordenes", "sigma", "flota", "personal"],
+  jefe: ["tablero", "comisiones", "ordenes", "flota", "personal"],
   operaciones: ["comisiones", "flota"],
-  documentario: ["ordenes", "sigma", "papeletas"],
+  documentario: ["comisiones", "ordenes"],
   mantenimiento: ["flota"],
   chofer: ["agenda"],
 };
@@ -374,7 +373,7 @@ function cardChofer(c, esHoy) {
     el("div", { class: "hora" }, c.hora_salida, el("small", null, c.hora_retorno ? "vuelve ~" + c.hora_retorno : "")),
     el("div", null,
       el("div", { class: "row sp" }, el("span", { class: "dest" }, c.destino), estadoComTag(c)),
-      el("div", { class: "meta" }, el("b", null, v ? v.nombre : "—"), combTag(v), el("span", { class: "mut" }, G.ZONA[c.zona]))),
+      el("div", { class: "meta" }, el("b", null, v ? nVeh(v) : "—"), combTag(v), el("span", { class: "mut" }, G.ZONA[c.zona]))),
     el("div", { class: "full meta" }, el("span", null, "👥 " + G.etiquetaCarga(c)), retornoTag(c)),
     c.motivo || c.solicitante ? el("div", { class: "full small mut" }, [c.solicitante, c.motivo].filter(Boolean).join(" · ")) : null,
     c.detalle_agrupados ? el("div", { class: "full small" }, tag("Consolidada", "t-ok"), " ", c.detalle_agrupados) : null,
@@ -402,7 +401,7 @@ function pasoSalir(c) {
   const v = veh(c.vehiculo_id);
   const km = kmInput(v && v.km_actual);
   const cerrar = modal("Salí a comisión", el("div", null,
-    el("p", null, el("b", null, c.hora_salida + " · " + c.destino), el("br"), v ? v.nombre : ""),
+    el("p", null, el("b", null, c.hora_salida + " · " + c.destino), el("br"), v ? nVeh(v) : ""),
     el("label", { class: "l" }, "Kilometraje de salida (odómetro)"), km,
     v && v.km_actual ? el("p", { class: "small mut" }, "Último registrado: " + v.km_actual + " km") : null),
     el("button", { class: "btn primary big", onclick: () => {
@@ -446,7 +445,7 @@ function pasoRetornar(c) {
 function vComisiones() {
   const f = S.fCom || hoy();
   const coms = S.d.comisiones.filter((c) => c.fecha === f).sort(byHora);
-  const puede = es(R.JEFE, R.OPS);
+  const puede = es(R.JEFE, R.OPS, R.DOC);
   return el("div", null,
     el("div", { class: "toolbar" }, chipsFecha(f, (v) => { S.fCom = v; render(); }), el("span", { class: "grow" }),
       puede && coms.some((c) => c.estado !== "CANCELADA") ? btnWhatsApp(() => G.textoParte(f, S.d.comisiones, S.d.vehiculos, S.d.personal), "Parte por WhatsApp") : null,
@@ -466,9 +465,9 @@ function panelRetornos(f) {
       const v = veh(c.vehiculo_id);
       const rec = G.recogidasParaRetorno(c, todas);
       return el("div", { class: "row", style: "margin-top:8px" },
-        el("div", { class: "grow" }, el("b", { style: "display:inline" }, c.hora_salida + " " + c.destino), " · " + (v ? v.nombre : "") + " · vuelve ~" + G.deMin(G.intervalo(c)[1]) + " · " + (c.retorno === "VACIO" ? "EN VACÍO" : "por confirmar"),
+        el("div", { class: "grow" }, el("b", { style: "display:inline" }, c.hora_salida + " " + c.destino), " · " + (v ? nVeh(v) : "") + " · vuelve ~" + G.deMin(G.intervalo(c)[1]) + " · " + (c.retorno === "VACIO" ? "EN VACÍO" : "por confirmar"),
           rec.length ? el("div", { class: "small" }, "↔ " + rec.length + " solicitud(es) de recoger en el sector: " + rec.map((o) => o.destino + " " + o.hora_salida).join(", ")) : null),
-        es(R.JEFE, R.OPS) ? el("button", { class: "btn", onclick: () => modalAgrupar(c, "RETORNO") }, "Coordinar retorno") : null);
+        es(R.JEFE, R.OPS, R.DOC) ? el("button", { class: "btn", onclick: () => modalAgrupar(c, "RETORNO") }, "Coordinar retorno") : null);
     }));
 }
 
@@ -479,7 +478,7 @@ function cardComision(c, puede) {
     el("div", { class: "hora" }, c.hora_salida, el("small", null, c.hora_retorno ? "→ " + c.hora_retorno : "")),
     el("div", null,
       el("div", { class: "row sp" }, el("span", { class: "dest" }, c.destino), estadoComTag(c)),
-      el("div", { class: "meta" }, el("b", null, v ? v.nombre : "—"), combTag(v), el("span", null, "🧑‍✈️ " + (ch ? ch.nombre : "—")))),
+      el("div", { class: "meta" }, el("b", null, v ? nVeh(v) : "—"), combTag(v), el("span", null, "🧑‍✈️ " + (ch ? ch.nombre : "—")))),
     el("div", { class: "full meta" }, el("span", null, "👥 " + G.etiquetaCarga(c)), retornoTag(c), el("span", { class: "mut small" }, G.ZONA[c.zona] + (c.eje !== "URBANO" ? " · eje " + c.eje.toLowerCase() : ""))),
     c.solicitante || c.motivo ? el("div", { class: "full small mut" }, [c.solicitante, c.motivo].filter(Boolean).join(" · ")) : null,
     c.override_motivo ? el("div", { class: "full small" }, tag("Cambio de unidad", "t-warn"), " " + c.override_motivo) : null,
@@ -518,7 +517,7 @@ function modalAgrupar(c, modo, pre) {
   const quien = el("input", { class: "in", value: pre.solicitante || "", placeholder: "Dependencia o persona" });
   const donde = el("input", { class: "in", value: pre.destino || c.destino });
   const cerrar = modal(modo === "IDA" ? "Agregar a la comisión" : "Coordinar retorno", el("div", null,
-    el("p", null, el("b", null, c.hora_salida + " · " + c.destino + " · " + v.nombre)),
+    el("p", null, el("b", null, c.hora_salida + " · " + c.destino + " · " + nVeh(v))),
     el("p", { class: "mut" }, modo === "IDA" ? "Libres: " + k.cupos + " cupos" + (v.cap_carga_t ? " y " + k.espacio + " t" : "") : "La unidad vuelve a base: indica qué traerá de regreso."),
     el("div", { class: "fila2" }, el("div", null, el("label", { class: "l" }, "Pasajeros"), pax), el("div", null, el("label", { class: "l" }, "Carga (t)"), carga)),
     el("label", { class: "l" }, "Solicitante"), quien,
@@ -593,7 +592,7 @@ function formComision(c, fecha) {
         const cap = v.cap_pax + " pax" + (G.num(v.cap_carga_t) ? " · " + v.cap_carga_t + " t" : "");
         return el("button", { type: "button", class: "vop " + it.nivel, "aria-pressed": F.vehiculo_id === v.id ? "true" : "false", disabled: it.nivel === "bloqueado" || yaSalio,
           onclick: () => { F.vehiculo_id = v.id; elegidoAMano = true; actualizar(); } },
-          el("span", { class: "n" }, v.nombre), el("span", null, tag(nt[0], nt[1])),
+          el("span", { class: "n" }, nVeh(v)), el("span", null, tag(nt[0], nt[1])),
           el("span", { class: "s" }, G.COMBUSTIBLE_NOMBRE[v.combustible] + " · " + v.km_gl + " km/gl · " + cap + (it.motivos.length ? " · " + it.motivos.join("; ") : "")));
       })));
     // Choferes
@@ -645,130 +644,17 @@ function formComision(c, fecha) {
   actualizar();
 }
 
-// ================================================================ PARTE DOCUMENTARIO
-function vPapeletas() {
-  const f = S.fDoc || hoy();
-  const coms = S.d.comisiones.filter((c) => c.fecha === f && c.estado !== "CANCELADA").sort(byHora);
-  const abast = S.d.combustible.filter((a) => a.fecha === f);
-  const r = G.resumen(f, f, S.d.comisiones, S.d.vehiculos, S.d.combustible);
-  const puedeComb = es(R.JEFE, R.DOC);
-  return el("div", null,
-    el("div", { class: "toolbar" }, chipsFecha(f, (v) => { S.fDoc = v; render(); }), el("span", { class: "grow" }),
-      el("button", { class: "btn", onclick: () => exportarDia(f, coms, abast) }, "Exportar CSV (Excel)"),
-      el("button", { class: "btn", onclick: () => copiar(resumenTexto(f, coms, r)) }, "Copiar resumen"),
-      btnWhatsApp(() => resumenTexto(f, coms, r))),
-    el("h2", null, "Papeletas del " + G.fechaLarga(f)),
-    el("div", { class: "grid2" }, ["GASOHOL", "PETROLEO"].map((t) => tarjetaComb(t, r.porComb[t]))),
-    el("h3", null, "Comisiones (" + coms.length + ")"),
-    coms.length ? el("div", { class: "list" }, coms.map(filaPapeleta)) : vacio("No hay comisiones este día."),
-    el("h3", null, "Abastecimientos de combustible"),
-    puedeComb ? formAbastecimiento(f) : null,
-    abast.length ? el("div", { class: "card scroll-x", style: "margin-top:10px" }, el("table", { class: "t" },
-      el("thead", null, el("tr", null, el("th", null, "Unidad"), el("th", null, "Combustible"), el("th", { class: "n" }, "Galones"), el("th", { class: "n" }, "Km"), el("th", null, "Vale"), el("th"))),
-      el("tbody", null, abast.map((a) => { const v = veh(a.vehiculo_id); return el("tr", null, el("td", null, v ? v.nombre : a.vehiculo_id), el("td", null, combTag(v)), el("td", { class: "n" }, fmt(a.galones, 2)), el("td", { class: "n" }, a.km_odometro || "—"), el("td", null, a.vale || "—"),
-        el("td", null, puedeComb ? el("button", { class: "btn ghost", onclick: () => borrarAbast(a) }, "Borrar") : null)); }))))
-      : el("p", { class: "mut" }, "Sin abastecimientos registrados este día."),
-    el("h3", null, "Reporte por rango de fechas"), reporteRango());
-}
-
-function tarjetaComb(tipo, x) {
-  const dif = Math.round((x.gal_real - x.gal_est) * 100) / 100;
-  return el("div", { class: "card" },
-    el("div", { class: "row sp" }, el("b", null, G.COMBUSTIBLE_NOMBRE[tipo]), tag(tipo === "GASOHOL" ? "Kia Rio · Hilux · Versa" : "Agrale · camiones · minibuses · Hiace · Amarok", tipo === "GASOHOL" ? "t-gas" : "t-pet")),
-    el("div", { class: "kv", style: "margin-top:8px" },
-      el("div", null, el("b", null, "Viajes cerrados"), x.viajes),
-      el("div", null, el("b", null, "Km recorridos"), fmt(x.km)),
-      el("div", null, el("b", null, "Gal. estimados"), fmt(x.gal_est, 2)),
-      el("div", null, el("b", null, "Gal. abastecidos"), fmt(x.gal_real, 2)),
-      el("div", null, el("b", null, "Diferencia"), (dif > 0 ? "+" : "") + fmt(dif, 2) + " gl")));
-}
-
-function filaPapeleta(c) {
-  const v = veh(c.vehiculo_id), ch = per(c.chofer_id);
-  const papeleta = el("input", { class: "in", value: c.papeleta, placeholder: "N.º" });
-  const ks = el("input", { class: "in", type: "number", inputmode: "numeric", value: c.km_salida });
-  const kl = el("input", { class: "in", type: "number", inputmode: "numeric", value: c.km_llegada });
-  const out = el("div", { class: "strong" });
-  const calc = () => { const r = G.calcularKm({ km_salida: ks.value, km_llegada: kl.value }, v); out.textContent = r.km_recorridos !== "" ? fmt(r.km_recorridos) + " km · " + fmt(r.galones_est, 2) + " gl " + (v ? G.COMBUSTIBLE_NOMBRE[v.combustible] : "") : "Falta km"; };
-  ks.oninput = kl.oninput = calc; calc();
-  const btn = el("button", { class: "btn primary", onclick: async () => {
-    btn.disabled = true;
-    try { await api("doc_comision", { id: c.id, papeleta: papeleta.value, km_salida: ks.value, km_llegada: kl.value }); toast("Papeleta guardada", "ok"); await sincronizar(true); }
-    catch (e) { toast(e.message, "bad"); btn.disabled = false; }
-  } }, "Guardar");
-  return el("div", { class: "card" },
-    el("div", { class: "row sp" }, el("div", null, el("b", null, c.hora_salida + " · " + c.destino), el("div", { class: "small mut" }, (v ? v.nombre : "") + " · " + (ch ? ch.nombre : "") + " · " + G.etiquetaCarga(c))), el("div", { class: "row" }, combTag(v), estadoComTag(c))),
-    el("div", { class: "fila2", style: "grid-template-columns:repeat(auto-fit,minmax(120px,1fr));margin-top:6px" },
-      el("div", null, el("label", { class: "l" }, "Papeleta"), papeleta),
-      el("div", null, el("label", { class: "l" }, "Km salida"), ks),
-      el("div", null, el("label", { class: "l" }, "Km llegada"), kl)),
-    el("div", { class: "row sp", style: "margin-top:10px" }, out, btn));
-}
-
-function formAbastecimiento(f) {
-  const sel = el("select", { class: "in" }, el("option", { value: "" }, "Unidad…"), S.d.vehiculos.map((v) => el("option", { value: v.id }, v.nombre + " (" + G.COMBUSTIBLE_NOMBRE[v.combustible] + ")")));
-  const gal = el("input", { class: "in", type: "number", inputmode: "decimal", step: "0.01", min: 0, placeholder: "Galones" });
-  const km = el("input", { class: "in", type: "number", inputmode: "numeric", placeholder: "Km odómetro" });
-  const vale = el("input", { class: "in", placeholder: "N.º de vale" });
-  const btn = el("button", { class: "btn ac", onclick: async () => {
-    if (!sel.value) return toast("Elige la unidad", "bad");
-    btn.disabled = true;
-    try { await api("registrar_combustible", { fecha: f, vehiculo_id: sel.value, galones: Number(gal.value), km_odometro: km.value, vale: vale.value }); toast("Abastecimiento registrado", "ok"); await sincronizar(true); }
-    catch (e) { toast(e.message, "bad"); btn.disabled = false; }
-  } }, "Registrar");
-  return el("div", { class: "card" }, el("div", { class: "fila2", style: "grid-template-columns:repeat(auto-fit,minmax(140px,1fr))" },
-    el("div", null, el("label", { class: "l" }, "Unidad"), sel), el("div", null, el("label", { class: "l" }, "Galones"), gal),
-    el("div", null, el("label", { class: "l" }, "Km odómetro"), km), el("div", null, el("label", { class: "l" }, "Vale"), vale)),
-    el("div", { class: "row", style: "margin-top:10px;justify-content:flex-end" }, btn));
-}
-async function borrarAbast(a) {
-  if (!confirm("¿Borrar este abastecimiento de " + a.galones + " gl? No se puede deshacer.")) return;
-  try { await api("borrar_combustible", { id: a.id }); toast("Borrado", "ok"); await sincronizar(true); } catch (e) { toast(e.message, "bad"); }
-}
-
-function exportarDia(f, coms, abast) {
-  const filas = [["Fecha", "Hora", "Destino", "Zona", "Unidad", "Combustible", "Chofer", "Pasajeros", "Carga t", "Retorno", "Estado", "Papeleta", "Km salida", "Km llegada", "Km recorridos", "Galones estimados", "Solicitante", "Motivo", "Consolidación", "Novedad"]];
-  coms.forEach((c) => { const v = veh(c.vehiculo_id), ch = per(c.chofer_id), k = G.calcularKm(c, v);
-    filas.push([c.fecha, c.hora_salida, c.destino, G.ZONA[c.zona], v ? v.nombre : "", v ? G.COMBUSTIBLE_NOMBRE[v.combustible] : "", ch ? ch.nombre : "", c.pasajeros, c.carga_t, G.RETORNO[c.retorno], G.ESTADO_COM[c.estado], c.papeleta, c.km_salida, c.km_llegada, k.km_recorridos, k.galones_est, c.solicitante, c.motivo, c.detalle_agrupados, c.novedad]); });
-  filas.push([]); filas.push(["ABASTECIMIENTOS"]); filas.push(["Fecha", "Unidad", "Combustible", "Galones", "Km odómetro", "Vale"]);
-  abast.forEach((a) => { const v = veh(a.vehiculo_id); filas.push([a.fecha, v ? v.nombre : a.vehiculo_id, G.COMBUSTIBLE_NOMBRE[a.combustible], a.galones, a.km_odometro, a.vale]); });
-  descargar("GRUP7-papeletas-" + f + ".csv", csv(filas));
-}
-function resumenTexto(f, coms, r) {
-  const vm = G.mapa(S.d.vehiculos), pm = G.mapa(S.d.personal);
-  const l = ["RESUMEN DIARIO – TRANSPORTES GRUP7", G.fechaLarga(f).toUpperCase(), ""];
-  coms.forEach((c, i) => { const k = G.calcularKm(c, vm[c.vehiculo_id]); l.push((i + 1) + ") " + G.lineaComision(c, vm, pm) + (k.km_recorridos !== "" ? " · " + k.km_recorridos + " km · " + k.galones_est + " gl" : "") + (c.papeleta ? " · Pap. " + c.papeleta : "")); });
-  l.push("");
-  ["GASOHOL", "PETROLEO"].forEach((t) => { const x = r.porComb[t]; l.push(G.COMBUSTIBLE_NOMBRE[t] + ": " + x.km + " km · " + x.gal_est + " gl estimados · " + x.gal_real + " gl abastecidos"); });
-  l.push("Viajes evitados por consolidación: " + r.evitados + " · Retornos en vacío: " + r.retornos_vacios);
-  return l.join("\n");
-}
-
-function reporteRango() {
-  const box = el("div", { class: "card" });
-  const d1 = el("input", { class: "in", type: "date", value: hoy().slice(0, 8) + "01" });
-  const d2 = el("input", { class: "in", type: "date", value: hoy() });
-  const out = el("div");
-  const pintar = () => {
-    const r = G.resumen(d1.value, d2.value, S.d.comisiones, S.d.vehiculos, S.d.combustible);
-    out.replaceChildren(
-      el("div", { class: "scroll-x", style: "margin-top:10px" }, el("table", { class: "t" },
-        el("thead", null, el("tr", null, el("th", null, "Unidad"), el("th", null, "Combustible"), el("th", { class: "n" }, "Viajes"), el("th", { class: "n" }, "Km"), el("th", { class: "n" }, "Gl est."), el("th", { class: "n" }, "Gl abast."))),
-        el("tbody", null, ["GASOHOL", "PETROLEO"].map((t) => [
-          ...S.d.vehiculos.filter((v) => v.combustible === t).map((v) => { const x = r.porVeh[v.id]; return el("tr", null, el("td", null, v.nombre), el("td", null, combTag(v)), el("td", { class: "n" }, x.viajes), el("td", { class: "n" }, fmt(x.km)), el("td", { class: "n" }, fmt(x.gal_est, 2)), el("td", { class: "n" }, fmt(x.gal_real, 2))); }),
-          el("tr", { style: "font-weight:800" }, el("td", null, "TOTAL " + G.COMBUSTIBLE_NOMBRE[t].toUpperCase()), el("td"), el("td", { class: "n" }, r.porComb[t].viajes), el("td", { class: "n" }, fmt(r.porComb[t].km)), el("td", { class: "n" }, fmt(r.porComb[t].gal_est, 2)), el("td", { class: "n" }, fmt(r.porComb[t].gal_real, 2))),
-        ])))),
-      el("div", { class: "row", style: "margin-top:10px;justify-content:flex-end" }, el("button", { class: "btn", onclick: () => {
-        const filas = [["Unidad", "Combustible", "Viajes", "Km", "Galones estimados", "Galones abastecidos"]];
-        S.d.vehiculos.forEach((v) => { const x = r.porVeh[v.id]; filas.push([v.nombre, G.COMBUSTIBLE_NOMBRE[v.combustible], x.viajes, x.km, x.gal_est, x.gal_real]); });
-        ["GASOHOL", "PETROLEO"].forEach((t) => filas.push(["TOTAL " + G.COMBUSTIBLE_NOMBRE[t], "", r.porComb[t].viajes, r.porComb[t].km, r.porComb[t].gal_est, r.porComb[t].gal_real]));
-        descargar("GRUP7-combustible-" + d1.value + "-al-" + d2.value + ".csv", csv(filas));
-      } }, "Exportar CSV")));
-  };
-  d1.onchange = d2.onchange = pintar;
-  box.append(el("div", { class: "fila2" }, el("div", null, el("label", { class: "l" }, "Desde"), d1), el("div", null, el("label", { class: "l" }, "Hasta"), d2)), out);
-  pintar();
-  return box;
+// ================================================================ JEFE: combustible gastado (km del odómetro ÷ rendimiento km/gl)
+function tablaCombustible(r) {
+  const filasT = (t) => S.d.vehiculos.filter((v) => v.combustible === t && r.porVeh[v.id].viajes);
+  const hay = ["PETROLEO", "GASOHOL"].some((t) => filasT(t).length);
+  if (!hay) return el("p", { class: "mut" }, "Aún no hay comisiones con kilometraje en este periodo.");
+  return el("div", { class: "card scroll-x", style: "margin-top:10px" }, el("table", { class: "t" },
+    el("thead", null, el("tr", null, el("th", null, "Unidad"), el("th", null, "Combustible"), el("th", { class: "n" }, "Comisiones"), el("th", { class: "n" }, "Km"), el("th", { class: "n" }, "km/gl"), el("th", { class: "n" }, "Galones"))),
+    el("tbody", null, ["PETROLEO", "GASOHOL"].filter((t) => filasT(t).length).map((t) => [
+      ...filasT(t).map((v) => { const x = r.porVeh[v.id]; return el("tr", null, el("td", { class: "strong" }, v.nombre + (v.placa ? " " + v.placa : "")), el("td", null, combTag(v)), el("td", { class: "n" }, x.viajes), el("td", { class: "n" }, fmt(x.km)), el("td", { class: "n" }, v.km_gl), el("td", { class: "n strong" }, fmt(x.gal_est, 2))); }),
+      el("tr", { style: "font-weight:800" }, el("td", { colspan: 2 }, "TOTAL " + G.COMBUSTIBLE_NOMBRE[t].toUpperCase()), el("td", { class: "n" }, r.porComb[t].viajes), el("td", { class: "n" }, fmt(r.porComb[t].km)), el("td"), el("td", { class: "n" }, fmt(r.porComb[t].gal_est, 2))),
+    ]))));
 }
 
 // ================================================================ MANTENIMIENTO: Flota
@@ -798,7 +684,7 @@ function cardVehiculo(v, puede) {
     sincronizar(true).catch(() => {});
   };
   return el("article", { class: "card" },
-    el("div", { class: "row sp" }, el("div", { class: "row" }, estadoVehDot(v.estado), el("b", { style: "font-size:17px" }, v.nombre)), combTag(v)),
+    el("div", { class: "row sp" }, el("div", { class: "row" }, estadoVehDot(v.estado), el("b", { style: "font-size:17px" }, nVeh(v))), combTag(v)),
     el("div", { class: "small mut", style: "margin:4px 0 8px" }, v.km_gl + " km/gl · " + v.cap_pax + " personas" + (G.num(v.cap_carga_t) ? " · " + v.cap_carga_t + " t" : "") + (v.km_actual ? " · odómetro " + v.km_actual + " km" : "")),
     puede ? [
       seg(G.ESTADO_VEH, estado, (k) => { estado = k; if (k !== "INOPERATIVO") guardar(); else { nov.focus(); toast("Escribe la falla y toca “Guardar novedad”", "warn"); } }, "estado-seg"),
@@ -816,6 +702,7 @@ function vTablero() {
   const prox = S.d.comisiones.filter((c) => c.fecha === h && c.estado === "PROGRAMADA").sort(byHora);
   const inop = S.d.vehiculos.filter((v) => v.estado === "INOPERATIVO");
   const vigilar = S.d.comisiones.filter((c) => c.fecha === h && G.activa(c) && c.zona !== "URBANO" && c.retorno === "VACIO");
+  const sinKm = S.d.comisiones.filter((c) => c.fecha >= rango[0] && c.fecha <= rango[1] && c.estado !== "CANCELADA" && G.calcularKm(c, veh(c.vehiculo_id)).km_recorridos === "").length;
   return el("div", null,
     el("div", { class: "toolbar" }, el("div", { class: "chips" }, [["hoy", "Hoy"], ["semana", "7 días"], ["mes", "Mes"]].map(([k, t]) =>
       el("button", { class: "chip", "aria-pressed": S.periodo === k ? "true" : "false", onclick: () => { S.periodo = k; render(); } }, t))),
@@ -825,21 +712,25 @@ function vTablero() {
       el("div", { class: "kpi hl" }, el("b", { style: "color:var(--ok)" }, r.evitados), el("span", null, "Viajes vacíos evitados (" + r.agrupados + " agrupados · " + r.retornos_coord + " retornos)")),
       el("div", { class: "kpi" }, el("b", { style: "color:" + (r.retornos_vacios ? "var(--warn)" : "inherit") }, r.retornos_vacios), el("span", null, "Retornos en vacío")),
       el("div", { class: "kpi" }, el("b", null, fmt(r.porComb.GASOHOL.km + r.porComb.PETROLEO.km, 0)), el("span", null, "Km recorridos · " + r.pax + " pasajeros"))),
-    el("h3", null, "Combustible: estimado vs. real (abastecido)"),
-    el("div", { class: "grid2" }, ["GASOHOL", "PETROLEO"].map((t) => tarjetaComb(t, r.porComb[t]))),
-    vigilar.length ? el("div", { class: "alert warn", style: "margin-top:14px" }, el("b", null, "Retornos en vacío previstos hoy"), vigilar.map((c) => el("div", null, c.hora_salida + " " + c.destino + " · " + (veh(c.vehiculo_id) || {}).nombre))) : null,
+    el("h3", null, "Combustible gastado en comisiones"),
+    el("div", { class: "kpis" }, ["PETROLEO", "GASOHOL"].map((t) => el("div", { class: "kpi" },
+      el("b", null, fmt(r.porComb[t].gal_est, 2) + " gl"),
+      el("span", null, G.COMBUSTIBLE_NOMBRE[t] + " · " + fmt(r.porComb[t].km, 0) + " km")))),
+    tablaCombustible(r),
+    sinKm ? el("p", { class: "small mut" }, sinKm + " comisión(es) del periodo aún sin kilometraje de salida y llegada: se suman cuando el chofer registra el odómetro al salir y al volver.") : null,
+    vigilar.length ? el("div", { class: "alert warn", style: "margin-top:14px" }, el("b", null, "Retornos en vacío previstos hoy"), vigilar.map((c) => el("div", null, c.hora_salida + " " + c.destino + " · " + nVeh(veh(c.vehiculo_id))))) : null,
     el("div", { class: "grid2", style: "margin-top:14px" },
       el("div", { class: "card" }, el("b", null, "En ruta ahora (" + enRuta.length + ")"),
-        enRuta.length ? enRuta.map((c) => el("div", { class: "row", style: "margin-top:8px" }, el("span", { class: "strong" }, c.salida_real || c.hora_salida), el("span", { class: "grow" }, c.destino + " · " + (veh(c.vehiculo_id) || {}).nombre + " · " + (per(c.chofer_id) || {}).nombre), estadoComTag(c)))
+        enRuta.length ? enRuta.map((c) => el("div", { class: "row", style: "margin-top:8px" }, el("span", { class: "strong" }, c.salida_real || c.hora_salida), el("span", { class: "grow" }, c.destino + " · " + nVeh(veh(c.vehiculo_id)) + " · " + (per(c.chofer_id) || {}).nombre), estadoComTag(c)))
           : el("p", { class: "mut" }, "Ninguna unidad fuera de base.")),
       el("div", { class: "card" }, el("b", null, "Por salir hoy (" + prox.length + ")"),
-        prox.length ? prox.map((c) => el("div", { class: "row", style: "margin-top:8px" }, el("span", { class: "strong" }, c.hora_salida), el("span", { class: "grow" }, c.destino + " · " + (veh(c.vehiculo_id) || {}).nombre + " · " + (per(c.chofer_id) || {}).nombre), retornoTag(c)))
+        prox.length ? prox.map((c) => el("div", { class: "row", style: "margin-top:8px" }, el("span", { class: "strong" }, c.hora_salida), el("span", { class: "grow" }, c.destino + " · " + nVeh(veh(c.vehiculo_id)) + " · " + (per(c.chofer_id) || {}).nombre), retornoTag(c)))
           : el("p", { class: "mut" }, "No quedan salidas programadas hoy."))),
     el("h3", null, "Estado de la flota"),
     el("div", { class: "card scroll-x" }, el("table", { class: "t" },
-      el("thead", null, el("tr", null, el("th", null, "Unidad"), el("th", null, "Estado"), el("th", null, "Combustible"), el("th", { class: "n" }, "km/gl"), el("th", { class: "n" }, "Km " + rango[2].toLowerCase()), el("th", null, "Novedad"))),
-      el("tbody", null, S.d.vehiculos.map((v) => el("tr", null, el("td", { class: "strong" }, v.nombre),
-        el("td", null, el("span", { class: "row", style: "gap:6px;flex-wrap:nowrap" }, estadoVehDot(v.estado), G.ESTADO_VEH[v.estado])), el("td", null, combTag(v)), el("td", { class: "n" }, v.km_gl), el("td", { class: "n" }, fmt(r.porVeh[v.id].km)), el("td", { class: "small" }, v.novedad || "—")))))),
+      el("thead", null, el("tr", null, el("th", null, "Unidad"), el("th", null, "Estado"), el("th", null, "Combustible"), el("th", { class: "n" }, "km/gl"), el("th", null, "Novedad"))),
+      el("tbody", null, S.d.vehiculos.map((v) => el("tr", null, el("td", { class: "strong" }, nVeh(v)),
+        el("td", null, el("span", { class: "row", style: "gap:6px;flex-wrap:nowrap" }, estadoVehDot(v.estado), G.ESTADO_VEH[v.estado])), el("td", null, combTag(v)), el("td", { class: "n" }, v.km_gl), el("td", { class: "small" }, v.novedad || "—")))))),
     inop.length ? el("p", { class: "small mut" }, inop.length + " unidad(es) inoperativa(s): no se pueden asignar hasta que Mantenimiento las pase a Operativo.") : null);
 }
 
@@ -882,7 +773,7 @@ function cardOrdenComision(c) {
   return el("div", { class: "card" },
     el("div", { class: "row" }, el("b", { class: "grow" }, fCorta(c.fecha) + " · " + c.hora_salida + " · " + c.destino),
       o ? tag("Orden N.º " + nOrden(o), "t-ok") : tag("Sin orden", c.fecha >= hoy() ? "t-bad" : "t-mut")),
-    el("p", { class: "small" }, (v ? v.nombre : "") + " · " + (ch ? ch.nombre : "") + " · " + G.ZONA[c.zona] + (c.motivo ? " · " + c.motivo : "")),
+    el("p", { class: "small" }, (v ? nVeh(v) : "") + " · " + (ch ? ch.nombre : "") + " · " + G.ZONA[c.zona] + (c.motivo ? " · " + c.motivo : "")),
     el("div", { class: "row", style: "gap:6px" }, o ? accionesOrden(o, false)
       : el("button", { class: "btn ac", onclick: () => formOrden(borrador(c)) }, "Hacer orden de movimiento")));
 }
@@ -934,7 +825,7 @@ function formOrden(o) {
   txtVeh.hidden = !(F.vehiculo && !listaVeh.includes(F.vehiculo));
   const f = (k) => F[k] || "—";
   const cuerpo = el("div", null,
-    c ? el("p", null, el("b", null, "Comisión: " + fCorta(c.fecha) + " " + c.hora_salida + " · " + c.destino + " · " + (v ? v.nombre : ""))) : null,
+    c ? el("p", null, el("b", null, "Comisión: " + fCorta(c.fecha) + " " + c.hora_salida + " · " + c.destino + " · " + (v ? nVeh(v) : ""))) : null,
     el("div", { class: "fila2" }, campo("N.º de orden", input("numero", { type: "number", inputmode: "numeric", min: 1 })), campo("Año", input("anio", { type: "number", inputmode: "numeric" }))),
     campo("Conductor", el("div", null, selCond, txtCond)),
     campo("Vehículo y placa", el("div", null, selVeh, txtVeh)),
@@ -1059,80 +950,6 @@ async function descargarOrdenPDF(o) {
     toast("PDF descargado: ábrelo e imprímelo (A4 horizontal, 2 copias en una hoja).", "ok", 6000);
     return doc;
   } catch (e) { toast(e.message, "bad", 6000); }
-}
-
-// ================================================================ DOCUMENTARIO: Para SIGMA (Módulo de Combustible)
-const K_SIGMA = "grup7_sigma_despachos";
-function leerPegadoSigma() { try { return localStorage.getItem(K_SIGMA) || ""; } catch { return ""; } }
-function guardarPegadoSigma(t) { try { localStorage.setItem(K_SIGMA, t); } catch {} }
-async function copiarDato(t) {
-  try { await navigator.clipboard.writeText(String(t)); toast("Copiado: " + String(t).slice(0, 40), "ok", 1800); }
-  catch { modal("Copiar", el("textarea", { class: "in", rows: 4, value: String(t), onfocus: (e) => e.target.select() })); }
-}
-const btnCopiar = (t, etq) => el("button", { class: "btn ghost", style: "min-height:36px;padding:4px 10px", onclick: () => copiarDato(t), disabled: !t }, etq || "Copiar");
-
-function vSigma() {
-  const texto = leerPegadoSigma();
-  const desp = G.parsearDespachosSIGMA(texto);
-  const pend = desp.filter((d) => d.pendiente > 0);
-  const area = el("textarea", { class: "in", rows: 4, value: texto, placeholder: "Pega aquí la tabla copiada de SIGMA → Distribución → Registro de comisión" });
-  const conductores = S.d.conductores || [];
-  const faltaNsa = conductores.filter((c) => !c.nsa).length;
-  return el("div", null,
-    el("h2", null, "Para SIGMA (Módulo de Combustible)"),
-    el("div", { class: "card" },
-      el("b", null, "1. Registro de comisión: pega los despachos"),
-      el("p", { class: "small mut" }, "En SIGMA: Distribución → Registro de comisión → Mostrar 25. Selecciona la tabla desde la primera fila hasta la última, copia (Ctrl+C) y pégala aquí. Si hay varias páginas, pega una debajo de otra."),
-      area,
-      el("div", { class: "row", style: "margin-top:8px" },
-        el("button", { class: "btn primary", onclick: () => { guardarPegadoSigma(area.value); render(); } }, "Leer despachos"),
-        texto ? el("button", { class: "btn ghost", onclick: () => { guardarPegadoSigma(""); render(); } }, "Borrar") : null,
-        texto ? el("span", { class: "small mut" }, desp.length + " despacho(s) leído(s) · " + pend.length + " con galones por registrar") : null),
-      faltaNsa ? el("p", { class: "small bad" }, "Falta el NSA de " + faltaNsa + " conductor(es): se agrega en la hoja, pestaña Conductores, columna nsa.") : null),
-    texto && !desp.length ? el("div", { class: "alert warn" }, "No se reconoció ningún despacho. Copia la tabla completa (con placa, fecha y galones).") : null,
-    pend.length ? el("div", null, el("h3", null, "Despachos por registrar (" + pend.length + ")"), pend.map((d) => cardDespachoSigma(d, desp))) : null,
-    texto && desp.length && !pend.length ? el("div", { class: "alert info" }, "Todos los despachos pegados ya tienen sus galones registrados en comisiones.") : null,
-    panelRfidSigma());
-}
-function cardDespachoSigma(d, desp) {
-  const r = G.repartoDespacho(d, desp, S.d.comisiones, S.d.vehiculos, S.d.conductores || []);
-  const v = r.vehiculo;
-  const todo = r.lineas.map((l) => [l.nsa || "(sin NSA)", l.observacion, l.galones].join(" | ")).join("\n");
-  return el("div", { class: "card", style: "margin-bottom:10px" },
-    el("div", { class: "row" },
-      el("b", { class: "grow" }, d.placa + " · " + fCorta(d.fecha) + " · " + d.galones + " gl " + d.tipo),
-      tag("Por registrar: " + d.pendiente + " gl", "t-bad")),
-    el("p", { class: "small" }, (v ? v.nombre : "Placa no está en la flota de la app") + (d.asignado ? " · ya registrado en SIGMA: " + d.asignado + " gl (revisa qué comisiones faltan)" : "") +
-      " · comisiones desde el " + fCorta(d.fecha) + (r.hasta ? " hasta antes del " + fCorta(r.hasta) : " en adelante")),
-    r.lineas.length ? el("div", { class: "scroll-x" }, el("table", { class: "t" },
-      el("thead", null, el("tr", null, el("th", null, "Fecha"), el("th", null, "NSA"), el("th", null, "Responsable"), el("th", null, "Observación (comisión)"), el("th", { class: "n" }, "Km"), el("th", { class: "n" }, "Gl"))),
-      el("tbody", null, r.lineas.map((l) => el("tr", null,
-        el("td", null, fCorta(l.comision.fecha).slice(0, 5)),
-        el("td", null, l.nsa ? el("div", null, l.nsa, " ", btnCopiar(l.nsa)) : tag("Sin NSA", "t-bad")),
-        el("td", { class: "small" }, l.responsable || (per(l.comision.chofer_id) || {}).nombre || ""),
-        el("td", null, el("div", { class: "small" }, l.observacion), btnCopiar(l.observacion)),
-        el("td", { class: "n" }, fmt(l.km, 0) + (l.km_real ? "" : "*")),
-        el("td", { class: "n strong" }, l.galones, " ", btnCopiar(l.galones))))))) : vacio("No hay comisiones de esta unidad en la app para ese periodo. Revisa que estén registradas."),
-    r.lineas.length ? el("p", { class: "small mut" }, "* km aproximados (sin odómetro): ida y vuelta según destino. Los galones se reparten según los km y suman exactamente " + d.pendiente + " gl.") : null,
-    r.lineas.length ? el("div", { class: "row" }, btnCopiar(todo, "Copiar todo")) : null);
-}
-function panelRfidSigma() {
-  const h = hoy(), r = S.rangoRfid || "manana";
-  const rangos = { hoy: [h, h, "Hoy"], manana: [G.sumarDias(h, 1), G.sumarDias(h, 1), "Mañana"], semana: [h, G.sumarDias(h, 6), "7 días"] };
-  const [desde, hasta] = rangos[r];
-  const sug = G.sugerenciaRFID(desde, hasta, S.d.comisiones, S.d.vehiculos);
-  const tot = { PETROLEO: 0, GASOHOL: 0 };
-  sug.forEach((x) => (tot[x.vehiculo.combustible] += x.galones));
-  return el("div", { class: "card", style: "margin-top:14px" },
-    el("b", null, "2. Asignaciones a RFID: cuánto cargar a cada vehículo"),
-    el("p", { class: "small mut" }, "Según las comisiones programadas (km aproximados + 10 %). En SIGMA: Distribución → Asignaciones departamentos → Distribuir combustible."),
-    el("div", { class: "chips" }, Object.keys(rangos).map((k) => el("button", { class: "chip", "aria-pressed": k === r ? "true" : "false", onclick: () => { S.rangoRfid = k; render(); } }, rangos[k][2]))),
-    sug.length ? el("div", { class: "scroll-x", style: "margin-top:8px" }, el("table", { class: "t" },
-      el("thead", null, el("tr", null, el("th", null, "Placa"), el("th", null, "Unidad"), el("th", null, "Combustible"), el("th", { class: "n" }, "Comisiones"), el("th", { class: "n" }, "Km aprox."), el("th", { class: "n" }, "Galones"))),
-      el("tbody", null, sug.map((x) => el("tr", null, el("td", { class: "strong" }, x.vehiculo.placa || "—", " ", btnCopiar(x.vehiculo.placa)), el("td", null, x.vehiculo.nombre),
-        el("td", null, x.vehiculo.combustible === "GASOHOL" ? "Gasohol Regular" : "Bio Diésel"), el("td", { class: "n" }, x.comisiones), el("td", { class: "n" }, fmt(x.km, 0)), el("td", { class: "n strong" }, x.galones, " ", btnCopiar(x.galones)))),
-        el("tr", { style: "font-weight:800" }, el("td", { colspan: 5 }, "Total Bio Diésel / Gasohol"), el("td", { class: "n" }, tot.PETROLEO + " / " + tot.GASOHOL)))))
-      : vacio("No hay comisiones programadas en ese periodo."));
 }
 
 // ================================================================ JEFE: Personal y avisos

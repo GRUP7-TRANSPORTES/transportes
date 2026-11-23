@@ -13,7 +13,7 @@ var GRUP7 = (function () {
   const TABLAS = {
     Vehiculos: ["id", "nombre", "combustible", "km_gl", "cap_pax", "cap_carga_t", "tipo", "refrigerado", "estado", "novedad", "km_actual", "actualizado", "actualizado_por", "placa"],
     Personal: ["id", "nombre", "grado", "rol", "pin_hash", "pin_sal", "telegram_chat_id", "tg_codigo", "tg_codigo_exp", "activo"],
-    Comisiones: ["id", "fecha", "hora_salida", "hora_retorno", "destino", "zona", "eje", "servicio", "pasajeros", "carga_tipo", "carga_t", "solicitante", "motivo", "vehiculo_id", "chofer_id", "retorno", "estado", "recomendado_id", "override_motivo", "agrupados", "retornos_coord", "detalle_agrupados", "salida_real", "km_salida", "llegada_real", "novedad", "retorno_real", "km_llegada", "km_recorridos", "galones_est", "papeleta", "aviso45", "aviso_retraso", "creado_por", "creado", "actualizado"],
+    Comisiones: ["id", "fecha", "hora_salida", "hora_retorno", "destino", "zona", "eje", "servicio", "pasajeros", "carga_tipo", "carga_t", "solicitante", "motivo", "vehiculo_id", "chofer_id", "retorno", "estado", "recomendado_id", "override_motivo", "agrupados", "retornos_coord", "detalle_agrupados", "salida_real", "km_salida", "llegada_real", "novedad", "retorno_real", "km_llegada", "km_recorridos", "galones_est", "papeleta", "aviso45", "aviso_retraso", "creado_por", "creado", "actualizado", "aviso10"],
     Combustible: ["id", "fecha", "vehiculo_id", "combustible", "galones", "km_odometro", "vale", "comision_id", "registrado_por", "creado"],
     Eventos: ["id", "ts", "tipo", "para", "texto", "comision_id"],
     Config: ["id", "valor"],
@@ -334,7 +334,7 @@ var GRUP7 = (function () {
   }
   function lineaComision(c, vmap, pmap) {
     const veh = vmap[c.vehiculo_id], ch = pmap[c.chofer_id];
-    return c.hora_salida + " · " + (veh ? veh.nombre + " (" + COMBUSTIBLE_NOMBRE[veh.combustible] + ")" : "sin unidad") +
+    return c.hora_salida + " · " + (veh ? veh.nombre + (veh.placa ? " " + veh.placa : "") + " (" + COMBUSTIBLE_NOMBRE[veh.combustible] + ")" : "sin unidad") +
       " · " + (ch ? ch.nombre : "sin chofer") + " · " + c.destino + " · " + etiquetaCarga(c) + " · Retorno: " + (RETORNO[c.retorno] || "-");
   }
   function textoParte(fecha, comisiones, vehiculos, personal) {
@@ -345,6 +345,7 @@ var GRUP7 = (function () {
     if (!del.length) out.push("Sin comisiones programadas.");
     del.forEach(function (c, i) {
       out.push((i + 1) + ") " + lineaComision(c, vmap, pmap));
+      if (c.motivo) out.push("   Motivo: " + c.motivo + (c.solicitante ? " (" + c.solicitante + ")" : ""));
       if (num(c.agrupados) || num(c.retornos_coord)) out.push("   ↳ Consolidada: " + (c.detalle_agrupados || ""));
     });
     const inop = vehiculos.filter(function (x) { return x.estado === "INOPERATIVO"; });
@@ -438,7 +439,7 @@ var GRUP7 = (function () {
   };
 
   H.guardar_comision = function (ctx, body) {
-    permiso(ctx, [ROL.JEFE, ROL.OPS]);
+    permiso(ctx, [ROL.JEFE, ROL.OPS, ROL.DOC]);
     const c = validarComision(body.comision);
     const vehiculos = ctx.db.all("Vehiculos"), comisiones = ctx.db.all("Comisiones");
     const veh = buscar(ctx, "Vehiculos", c.vehiculo_id);
@@ -462,13 +463,13 @@ var GRUP7 = (function () {
       if (previa.estado !== "PROGRAMADA") { // ya salió: solo se puede cambiar retorno, notas y hora de retorno
         cambios.vehiculo_id = previa.vehiculo_id; cambios.chofer_id = previa.chofer_id; cambios.fecha = previa.fecha; cambios.hora_salida = previa.hora_salida;
       }
-      if (previa.hora_salida !== cambios.hora_salida || previa.fecha !== cambios.fecha) cambios.aviso45 = "";
+      if (previa.hora_salida !== cambios.hora_salida || previa.fecha !== cambios.fecha) { cambios.aviso45 = ""; cambios.aviso10 = ""; }
       guardada = ctx.db.update("Comisiones", c.id, cambios);
     } else {
       guardada = ctx.db.insert("Comisiones", Object.assign({}, c, {
         id: ctx.uid(), estado: "PROGRAMADA", recomendado_id: rec.sugerido, agrupados: 0, retornos_coord: 0, detalle_agrupados: "",
         salida_real: "", km_salida: "", llegada_real: "", novedad: "", retorno_real: "", km_llegada: "", km_recorridos: "", galones_est: "",
-        papeleta: "", aviso45: "", aviso_retraso: "", creado_por: ctx.yo.id, creado: ahora, actualizado: ahora,
+        papeleta: "", aviso45: "", aviso10: "", aviso_retraso: "", creado_por: ctx.yo.id, creado: ahora, actualizado: ahora,
       }));
     }
     const todas = ctx.db.all("Comisiones");
@@ -478,7 +479,7 @@ var GRUP7 = (function () {
     let texto = titulo + "\n" + lineaComision(guardada, mapa(vehiculos), mapa(ctx.db.all("Personal")));
     if (guardada.motivo) texto += "\nMotivo: " + guardada.motivo;
     if (cons.length) texto += "\n⚠ " + cons[0].texto;
-    avisar(ctx, [guardada.chofer_id, "rol:" + ROL.OPS], "asignacion", texto, guardada.id);
+    avisar(ctx, [guardada.chofer_id, "rol:" + ROL.OPS, "rol:" + ROL.DOC], "asignacion", texto, guardada.id);
     if (previa && previa.chofer_id !== guardada.chofer_id) {
       avisar(ctx, previa.chofer_id, "asignacion", "Se te QUITÓ la comisión a " + previa.destino + " del " + fechaLarga(previa.fecha) + " " + previa.hora_salida + ".", guardada.id);
     }
@@ -492,7 +493,7 @@ var GRUP7 = (function () {
 
   // Suma una solicitud a una comisión que ya existe (en vez de mandar otra unidad).
   H.agrupar = function (ctx, body) {
-    permiso(ctx, [ROL.JEFE, ROL.OPS]);
+    permiso(ctx, [ROL.JEFE, ROL.OPS, ROL.DOC]);
     const c = buscar(ctx, "Comisiones", body.comision_id);
     if (!activa(c)) throw falla("Esa comisión ya no está activa");
     const veh = buscar(ctx, "Vehiculos", c.vehiculo_id);
@@ -516,22 +517,22 @@ var GRUP7 = (function () {
     }
     cambios.detalle_agrupados = (c.detalle_agrupados ? c.detalle_agrupados + " | " : "") + detalle;
     const out = ctx.db.update("Comisiones", c.id, cambios);
-    avisar(ctx, [c.chofer_id, "rol:" + ROL.OPS], "consolidacion", "Comisión CONSOLIDADA (" + c.hora_salida + " a " + c.destino + ", " + veh.nombre + "): " + detalle, c.id);
+    avisar(ctx, [c.chofer_id, "rol:" + ROL.OPS, "rol:" + ROL.DOC], "consolidacion", "Comisión CONSOLIDADA (" + c.hora_salida + " a " + c.destino + ", " + veh.nombre + "): " + detalle, c.id);
     return { comision: out };
   };
 
   H.cancelar_comision = function (ctx, body) {
-    permiso(ctx, [ROL.JEFE, ROL.OPS]);
+    permiso(ctx, [ROL.JEFE, ROL.OPS, ROL.DOC]);
     const c = buscar(ctx, "Comisiones", body.id);
     if (c.estado !== "PROGRAMADA") throw falla("Solo se cancela una comisión que aún no sale");
     const out = ctx.db.update("Comisiones", c.id, { estado: "CANCELADA", novedad: txt(body.motivo, 200), actualizado: ctx.now.toISOString() });
-    avisar(ctx, [c.chofer_id, "rol:" + ROL.OPS], "asignacion", "Comisión CANCELADA: " + c.destino + " " + fechaLarga(c.fecha) + " " + c.hora_salida + (body.motivo ? " (" + txt(body.motivo, 200) + ")" : ""), c.id);
+    avisar(ctx, [c.chofer_id, "rol:" + ROL.OPS, "rol:" + ROL.DOC], "asignacion", "Comisión CANCELADA: " + c.destino + " " + fechaLarga(c.fecha) + " " + c.hora_salida + (body.motivo ? " (" + txt(body.motivo, 200) + ")" : ""), c.id);
     return { comision: out };
   };
 
   H.chofer_paso = function (ctx, body) {
     const c = buscar(ctx, "Comisiones", body.id);
-    if (ctx.yo.rol === ROL.CHOFER ? c.chofer_id !== ctx.yo.id : [ROL.JEFE, ROL.OPS].indexOf(ctx.yo.rol) < 0) throw falla("Esta comisión no es tuya");
+    if (ctx.yo.rol === ROL.CHOFER ? c.chofer_id !== ctx.yo.id : [ROL.JEFE, ROL.OPS, ROL.DOC].indexOf(ctx.yo.rol) < 0) throw falla("Esta comisión no es tuya");
     const veh = buscar(ctx, "Vehiculos", c.vehiculo_id);
     const ch = ctx.db.get("Personal", c.chofer_id) || { nombre: "?" };
     const hora = horaLima(ctx.now), ts = ctx.now.toISOString();
@@ -643,7 +644,7 @@ var GRUP7 = (function () {
   };
 
   H.enviar_parte = function (ctx) {
-    permiso(ctx, [ROL.JEFE, ROL.OPS]);
+    permiso(ctx, [ROL.JEFE, ROL.OPS, ROL.DOC]);
     return Jobs.parte(ctx, true);
   };
 
@@ -857,9 +858,15 @@ var GRUP7 = (function () {
       if (c.fecha !== hoy || c.estado !== "PROGRAMADA") return;
       const falta = aMin(c.hora_salida) - ahoraMin;
       const veh = vmap[c.vehiculo_id];
-      if (!c.aviso45 && falta > 0 && falta <= 45) {
-        avisar(ctx, c.chofer_id, "recordatorio", "⏰ Recordatorio: en " + falta + " min sales (" + c.hora_salida + ") en " + (veh ? veh.nombre : "") + " a " + c.destino + " · " + etiquetaCarga(c) + ".", c.id);
+      const unidad = veh ? veh.nombre + (veh.placa ? " " + veh.placa : "") : "";
+      if (!c.aviso45 && falta > 10 && falta <= 45) {
+        avisar(ctx, c.chofer_id, "recordatorio", "⏰ Recordatorio: en " + falta + " min sales (" + c.hora_salida + ") en " + unidad + " a " + c.destino + " · " + etiquetaCarga(c) + ".", c.id);
         ctx.db.update("Comisiones", c.id, { aviso45: ctx.now.toISOString() });
+        enviados++;
+      } else if (!c.aviso10 && falta > 0 && falta <= 10) {
+        // Última alerta: 10 minutos antes (el activador corre cada 5 min, llega entre 10 y 5 min antes).
+        avisar(ctx, c.chofer_id, "recordatorio", "🚨 ¡Sales en " + falta + " min! (" + c.hora_salida + ") " + unidad + " a " + c.destino + ". Al salir marca «Salí» con el kilometraje.", c.id);
+        ctx.db.update("Comisiones", c.id, { aviso10: ctx.now.toISOString(), aviso45: c.aviso45 || ctx.now.toISOString() });
         enviados++;
       }
       if (!c.aviso_retraso && falta <= -15) {
