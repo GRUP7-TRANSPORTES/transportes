@@ -16,6 +16,7 @@ var GRUP7 = (function () {
     Comisiones: ["id", "fecha", "hora_salida", "hora_retorno", "destino", "zona", "eje", "servicio", "pasajeros", "carga_tipo", "carga_t", "solicitante", "motivo", "vehiculo_id", "chofer_id", "retorno", "estado", "recomendado_id", "override_motivo", "agrupados", "retornos_coord", "detalle_agrupados", "salida_real", "km_salida", "llegada_real", "novedad", "retorno_real", "km_llegada", "km_recorridos", "galones_est", "papeleta", "aviso45", "aviso_retraso", "creado_por", "creado", "actualizado", "aviso10"],
     Combustible: ["id", "fecha", "vehiculo_id", "combustible", "galones", "km_odometro", "vale", "comision_id", "registrado_por", "creado"],
     Eventos: ["id", "ts", "tipo", "para", "texto", "comision_id"],
+    Kilometraje: ["id", "fecha", "vehiculo_id", "km_inicial", "km_final", "km", "galones", "combustible", "registrado_por", "actualizado"],
     Config: ["id", "valor"],
     Conductores: ["id", "nombre_doc", "persona_id", "activo", "nsa"],
     Ordenes: ["id", "numero", "anio", "comision_id", "vehiculo_id", "chofer_id", "conductor", "vehiculo", "inicio", "termino", "galones", "combustible", "destino", "justificacion", "lugar", "fecha_emision",
@@ -430,6 +431,7 @@ var GRUP7 = (function () {
       personal: ctx.db.all("Personal").map(publico),
       comisiones: com,
       combustible: ctx.yo.rol === ROL.CHOFER ? [] : ctx.db.all("Combustible").filter(function (a) { return a.fecha >= desde; }),
+      kilometraje: ROLES_KM.indexOf(ctx.yo.rol) < 0 ? [] : ctx.db.all("Kilometraje").filter(function (k) { return k.fecha >= desde; }),
       eventos: eventos,
       ordenes: ROLES_ORDEN.indexOf(ctx.yo.rol) < 0 ? [] : ctx.db.all("Ordenes").filter(function (o) { return num(o.anio) >= num(hoy.slice(0, 4)) - 1; }),
       conductores: ROLES_ORDEN.indexOf(ctx.yo.rol) < 0 ? [] : ctx.db.all("Conductores").filter(esActivo),
@@ -649,6 +651,60 @@ var GRUP7 = (function () {
   };
 
   H.leer_avisos = function (ctx) { return { eventos: eventosPara(ctx.yo, ctx.db.all("Eventos")).slice(-60).reverse() }; };
+
+  // ---------- Kilometraje diario (lectura de odómetro de cada unidad a las 09:00) ----------
+  // Cada registro cubre las últimas 24 h: km inicial = lectura del día anterior, km final = lectura de hoy.
+  const ROLES_KM = [ROL.JEFE, ROL.DOC];
+  const HORA_KM = "09:00";
+  // Km inicial sugerido para una unidad en una fecha: el km final del registro anterior; si no hay, el odómetro de la unidad.
+  function kmInicialSugerido(fecha, vehiculo, registros) {
+    const prev = registros.filter(function (k) { return k.vehiculo_id === vehiculo.id && k.fecha < fecha && k.km_final !== ""; })
+      .sort(function (a, b) { return a.fecha < b.fecha ? 1 : -1; })[0];
+    return prev ? num(prev.km_final) : (vehiculo.km_actual !== "" && vehiculo.km_actual != null ? num(vehiculo.km_actual) : "");
+  }
+  // Suma de km y galones por unidad y por combustible entre dos fechas (incluidas).
+  function resumenKm(desde, hasta, registros, vehiculos) {
+    const r = { porVeh: {}, porComb: { PETROLEO: { km: 0, galones: 0, dias: 0 }, GASOHOL: { km: 0, galones: 0, dias: 0 } }, fechas: {} };
+    vehiculos.forEach(function (v) { r.porVeh[v.id] = { km: 0, galones: 0, dias: 0 }; });
+    registros.forEach(function (k) {
+      if (k.fecha < desde || k.fecha > hasta || k.km === "" || k.km == null) return;
+      const v = vehiculos.filter(function (x) { return x.id === k.vehiculo_id; })[0];
+      if (!v) return;
+      const pv = r.porVeh[v.id], pc = r.porComb[v.combustible];
+      pv.km += num(k.km); pv.galones += num(k.galones); pv.dias++;
+      if (pc) { pc.km += num(k.km); pc.galones += num(k.galones); pc.dias++; }
+      r.fechas[k.fecha] = 1;
+    });
+    Object.keys(r.porVeh).forEach(function (id) { const x = r.porVeh[id]; x.km = r1(x.km); x.galones = r2(x.galones); });
+    ["PETROLEO", "GASOHOL"].forEach(function (t) { const x = r.porComb[t]; x.km = r1(x.km); x.galones = r2(x.galones); });
+    r.dias_registrados = Object.keys(r.fechas).length;
+    return r;
+  }
+  H.guardar_kilometraje = function (ctx, body) {
+    permiso(ctx, ROLES_KM);
+    const fecha = String(body.fecha || "");
+    if (!RE_FECHA.test(fecha)) throw falla("Fecha inválida");
+    if (fecha > fechaLima(ctx.now)) throw falla("No se puede registrar un día futuro");
+    const filas = Array.isArray(body.filas) ? body.filas : [];
+    const ahora = ctx.now.toISOString(), guardados = [];
+    filas.forEach(function (f) {
+      const ini = f.km_inicial === "" || f.km_inicial == null ? null : Number(f.km_inicial);
+      const fin = f.km_final === "" || f.km_final == null ? null : Number(f.km_final);
+      if (fin === null) return; // sin km final (el inicial viene puesto solo): la unidad se deja como está
+      const v = buscar(ctx, "Vehiculos", f.vehiculo_id);
+      if (ini === null || fin === null || !isFinite(ini) || !isFinite(fin) || ini < 0 || fin < 0) throw falla(v.nombre + ": escribe el km inicial y el km final");
+      if (fin < ini) throw falla(v.nombre + ": el km final (" + fin + ") no puede ser menor que el inicial (" + ini + ")");
+      if (fin - ini > 3000) throw falla(v.nombre + ": " + (fin - ini) + " km en un día es demasiado; revisa los números");
+      const km = r1(fin - ini);
+      const reg = { id: fecha + "_" + v.id, fecha: fecha, vehiculo_id: v.id, km_inicial: ini, km_final: fin, km: km,
+        galones: num(v.km_gl) ? r2(km / num(v.km_gl)) : 0, combustible: v.combustible, registrado_por: ctx.yo.id, actualizado: ahora };
+      if (ctx.db.get("Kilometraje", reg.id)) ctx.db.update("Kilometraje", reg.id, reg); else ctx.db.insert("Kilometraje", reg);
+      if (fin > num(v.km_actual)) ctx.db.update("Vehiculos", v.id, { km_actual: fin });
+      guardados.push(reg);
+    });
+    if (!guardados.length) throw falla("No escribiste ningún kilometraje");
+    return { registros: guardados };
+  };
 
   // ---------- Orden de Movimiento (Orden de Misión FAP) para comisiones fuera de Piura ----------
   const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
@@ -887,7 +943,18 @@ var GRUP7 = (function () {
     if (cfg) ctx.db.update("Config", "parte_enviado", { valor: hoy }); else ctx.db.insert("Config", { id: "parte_enviado", valor: hoy });
     return { enviado: true, texto: texto };
   };
-  Jobs.todo = function (ctx) { return { recordatorios: Jobs.recordatorios(ctx), parte: Jobs.parte(ctx, false) }; };
+  // A las 09:00 avisa al Jefe y al Parte Documentario que registren el kilometraje (una vez al día).
+  Jobs.kilometraje = function (ctx) {
+    const hoy = fechaLima(ctx.now), hora = horaLima(ctx.now);
+    if (hora < HORA_KM) return { enviado: false };
+    const cfg = ctx.db.get("Config", "km_aviso");
+    if (cfg && cfg.valor === hoy) return { enviado: false };
+    const hechos = ctx.db.all("Kilometraje").filter(function (k) { return k.fecha === hoy; }).length;
+    if (!hechos) avisar(ctx, ["rol:" + ROL.JEFE, "rol:" + ROL.DOC], "kilometraje", "🛞 Son las " + HORA_KM + ": registra el kilometraje inicial y final de cada unidad (pestaña «Kilometraje diario»).", "");
+    if (cfg) ctx.db.update("Config", "km_aviso", { valor: hoy }); else ctx.db.insert("Config", { id: "km_aviso", valor: hoy });
+    return { enviado: !hechos };
+  };
+  Jobs.todo = function (ctx) { return { recordatorios: Jobs.recordatorios(ctx), parte: Jobs.parte(ctx, false), kilometraje: Jobs.kilometraje(ctx) }; };
 
   function publico(p) {
     return { id: p.id, nombre: p.nombre, grado: p.grado, rol: p.rol, tiene_pin: !!p.pin_hash, telegram: !!p.telegram_chat_id, activo: esActivo(p) };
@@ -909,6 +976,7 @@ var GRUP7 = (function () {
     recomendar: recomendar, requiereMotivo: requiereMotivo, consolidaciones: consolidaciones, recogidasParaRetorno: recogidasParaRetorno,
     calcularKm: calcularKm, resumen: resumen, textoParte: textoParte, lineaComision: lineaComision, etiquetaCarga: etiquetaCarga, mapa: mapa,
     validarComision: validarComision, eventosPara: eventosPara, destinatarios: destinatarios, publico: publico,
+    ROLES_KM: ROLES_KM, HORA_KM: HORA_KM, kmInicialSugerido: kmInicialSugerido, resumenKm: resumenKm,
     H: H, Jobs: Jobs, ejecutar: ejecutar, falla: falla, num: num, norm: norm,
     ROLES_ORDEN: ROLES_ORDEN, fechaOrden: fechaOrden, fechaEmision: fechaEmision, combustibleOrden: combustibleOrden, galonesSugeridos: galonesSugeridos,
     siguienteNumero: siguienteNumero, numeroOrden: numeroOrden, textosOrden: textosOrden, lineasExtraOrden: lineasExtraOrden, MAX_LINEAS_EXTRA: MAX_LINEAS_EXTRA, firmasOM: firmasOM, CLAVES_FIRMA: CLAVES_FIRMA, vehiculoOrden: vehiculoOrden,

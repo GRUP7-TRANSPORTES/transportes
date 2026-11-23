@@ -234,14 +234,15 @@ const TABS = {
   tablero: ["Tablero", () => vTablero()],
   comisiones: ["Comisiones", () => vComisiones()],
   agenda: ["Mi agenda", () => vAgenda()],
+  kilometraje: ["Kilometraje diario", () => vKilometraje()],
   ordenes: ["Órdenes de movimiento", () => vOrdenes()],
   flota: ["Flota", () => vFlota()],
   personal: ["Personal y avisos", () => vPersonal()],
 };
 const POR_ROL = {
-  jefe: ["tablero", "comisiones", "ordenes", "flota", "personal"],
+  jefe: ["tablero", "comisiones", "kilometraje", "ordenes", "flota", "personal"],
   operaciones: ["comisiones", "flota"],
-  documentario: ["comisiones", "ordenes"],
+  documentario: ["comisiones", "kilometraje", "ordenes"],
   mantenimiento: ["flota"],
   chofer: ["agenda"],
 };
@@ -644,17 +645,65 @@ function formComision(c, fecha) {
   actualizar();
 }
 
-// ================================================================ JEFE: combustible gastado (km del odómetro ÷ rendimiento km/gl)
-function tablaCombustible(r) {
-  const filasT = (t) => S.d.vehiculos.filter((v) => v.combustible === t && r.porVeh[v.id].viajes);
-  const hay = ["PETROLEO", "GASOHOL"].some((t) => filasT(t).length);
-  if (!hay) return el("p", { class: "mut" }, "Aún no hay comisiones con kilometraje en este periodo.");
+// ================================================================ Combustible por kilometraje diario (km ÷ rendimiento km/gl)
+function tablaCombustible(rk) {
+  const filasT = (t) => S.d.vehiculos.filter((v) => v.combustible === t && rk.porVeh[v.id].dias);
+  if (!["PETROLEO", "GASOHOL"].some((t) => filasT(t).length)) return el("p", { class: "mut" }, "Aún no hay kilometraje registrado en este periodo.");
   return el("div", { class: "card scroll-x", style: "margin-top:10px" }, el("table", { class: "t" },
-    el("thead", null, el("tr", null, el("th", null, "Unidad"), el("th", null, "Combustible"), el("th", { class: "n" }, "Comisiones"), el("th", { class: "n" }, "Km"), el("th", { class: "n" }, "km/gl"), el("th", { class: "n" }, "Galones"))),
+    el("thead", null, el("tr", null, el("th", null, "Unidad"), el("th", null, "Combustible"), el("th", { class: "n" }, "Días"), el("th", { class: "n" }, "Km"), el("th", { class: "n" }, "km/gl"), el("th", { class: "n" }, "Galones"))),
     el("tbody", null, ["PETROLEO", "GASOHOL"].filter((t) => filasT(t).length).map((t) => [
-      ...filasT(t).map((v) => { const x = r.porVeh[v.id]; return el("tr", null, el("td", { class: "strong" }, v.nombre + (v.placa ? " " + v.placa : "")), el("td", null, combTag(v)), el("td", { class: "n" }, x.viajes), el("td", { class: "n" }, fmt(x.km)), el("td", { class: "n" }, v.km_gl), el("td", { class: "n strong" }, fmt(x.gal_est, 2))); }),
-      el("tr", { style: "font-weight:800" }, el("td", { colspan: 2 }, "TOTAL " + G.COMBUSTIBLE_NOMBRE[t].toUpperCase()), el("td", { class: "n" }, r.porComb[t].viajes), el("td", { class: "n" }, fmt(r.porComb[t].km)), el("td"), el("td", { class: "n" }, fmt(r.porComb[t].gal_est, 2))),
+      ...filasT(t).map((v) => { const x = rk.porVeh[v.id]; return el("tr", null, el("td", { class: "strong" }, nVeh(v)), el("td", null, combTag(v)), el("td", { class: "n" }, x.dias), el("td", { class: "n" }, fmt(x.km)), el("td", { class: "n" }, v.km_gl), el("td", { class: "n strong" }, fmt(x.galones, 2))); }),
+      el("tr", { style: "font-weight:800" }, el("td", { colspan: 3 }, "TOTAL " + G.COMBUSTIBLE_NOMBRE[t].toUpperCase()), el("td", { class: "n" }, fmt(rk.porComb[t].km)), el("td"), el("td", { class: "n" }, fmt(rk.porComb[t].galones, 2))),
     ]))));
+}
+const kmHoyFalta = () => G.horaLima(new Date()) >= G.HORA_KM && !(S.d.kilometraje || []).some((k) => k.fecha === hoy());
+
+// ================================================================ JEFE y PARTE DOCUMENTARIO: Kilometraje diario (09:00)
+function vKilometraje() {
+  const f = S.fKm || hoy();
+  const regs = S.d.kilometraje || [];
+  const delDia = (id) => regs.find((k) => k.fecha === f && k.vehiculo_id === id);
+  const filas = S.d.vehiculos.map((v) => {
+    const r = delDia(v.id);
+    const ini = el("input", { class: "in", type: "number", inputmode: "numeric", min: 0, value: r ? r.km_inicial : G.kmInicialSugerido(f, v, regs), "aria-label": "Km inicial " + v.nombre });
+    const fin = el("input", { class: "in", type: "number", inputmode: "numeric", min: 0, value: r ? r.km_final : "", placeholder: "Odómetro", "aria-label": "Km final " + v.nombre });
+    const res = el("span", { class: "strong" });
+    const calc = () => {
+      const a = ini.value === "" ? null : Number(ini.value), b = fin.value === "" ? null : Number(fin.value);
+      fin.classList.toggle("err", a !== null && b !== null && b < a);
+      res.textContent = a === null || b === null ? "Falta km final" : b < a ? "El final es menor que el inicial" : fmt(b - a) + " km · " + fmt((b - a) / G.num(v.km_gl), 2) + " gl";
+    };
+    ini.oninput = fin.oninput = () => { calc(); totales(); };
+    return { v, ini, fin, calc, tr: el("div", { class: "card" },
+      el("div", { class: "row sp" }, el("b", null, nVeh(v)), el("span", { class: "row", style: "gap:6px" }, r ? tag("Registrado", "t-ok") : null, combTag(v))),
+      el("div", { class: "fila2", style: "margin-top:8px" }, el("div", null, el("label", { class: "l" }, "Km inicial"), ini), el("div", null, el("label", { class: "l" }, "Km final"), fin)),
+      el("div", { class: "small", style: "margin-top:6px" }, res, " · rinde " + v.km_gl + " km/gl")) };
+  });
+  const totEl = el("div", { class: "kpis", style: "margin-top:10px" });
+  function totales() {
+    const t = { PETROLEO: [0, 0], GASOHOL: [0, 0] };
+    filas.forEach(({ v, ini, fin }) => { const a = Number(ini.value), b = Number(fin.value); if (ini.value !== "" && fin.value !== "" && b >= a) { t[v.combustible][0] += b - a; t[v.combustible][1] += (b - a) / G.num(v.km_gl); } });
+    totEl.replaceChildren(...["PETROLEO", "GASOHOL"].map((k) => el("div", { class: "kpi" }, el("b", null, fmt(t[k][1], 2) + " gl"), el("span", null, G.COMBUSTIBLE_NOMBRE[k] + " · " + fmt(t[k][0], 0) + " km"))));
+  }
+  filas.forEach((x) => x.calc()); totales();
+  const btn = el("button", { class: "btn ac big", onclick: async () => {
+    btn.disabled = true;
+    try {
+      const r = await api("guardar_kilometraje", { fecha: f, filas: filas.map(({ v, ini, fin }) => ({ vehiculo_id: v.id, km_inicial: ini.value, km_final: fin.value })) });
+      toast("Kilometraje guardado: " + r.registros.length + " unidad(es).", "ok"); await sincronizar(true);
+    } catch (e) { toast(e.message, "bad", 7000); btn.disabled = false; }
+  } }, "Guardar kilometraje");
+  const fechaIn = el("input", { class: "in", type: "date", value: f, max: hoy(), style: "max-width:170px", onchange: (e) => { S.fKm = e.target.value || hoy(); render(); } });
+  const hechos = S.d.vehiculos.filter((v) => delDia(v.id)).length;
+  return el("div", null,
+    el("div", { class: "toolbar" }, el("h2", { style: "margin:0" }, "Kilometraje diario"), el("span", { class: "grow" }), fechaIn),
+    el("p", { class: "small mut" }, "Cada mañana a las " + G.HORA_KM + ": km inicial = lectura del día anterior (ya viene puesta), km final = lo que marca hoy el odómetro. Los galones salen de los km ÷ rendimiento (km/gl) de cada unidad. Si una unidad no se pudo leer, deja su km final en blanco y no se guarda."),
+    hechos ? el("div", { class: "alert" }, "✓ " + hechos + " de " + S.d.vehiculos.length + " unidades registradas el " + fCorta(f) + ". Puedes corregir y volver a guardar.")
+      : f === hoy() ? el("div", { class: "alert warn" }, "Aún no se registra el kilometraje de hoy.") : null,
+    el("div", { class: "list two" }, filas.map((x) => x.tr)),
+    el("h3", null, "Total del día"),
+    totEl,
+    el("div", { class: "row", style: "margin-top:12px;justify-content:flex-end" }, btn));
 }
 
 // ================================================================ MANTENIMIENTO: Flota
@@ -702,7 +751,7 @@ function vTablero() {
   const prox = S.d.comisiones.filter((c) => c.fecha === h && c.estado === "PROGRAMADA").sort(byHora);
   const inop = S.d.vehiculos.filter((v) => v.estado === "INOPERATIVO");
   const vigilar = S.d.comisiones.filter((c) => c.fecha === h && G.activa(c) && c.zona !== "URBANO" && c.retorno === "VACIO");
-  const sinKm = S.d.comisiones.filter((c) => c.fecha >= rango[0] && c.fecha <= rango[1] && c.estado !== "CANCELADA" && G.calcularKm(c, veh(c.vehiculo_id)).km_recorridos === "").length;
+  const rk = G.resumenKm(rango[0], rango[1], S.d.kilometraje || [], S.d.vehiculos);
   return el("div", null,
     el("div", { class: "toolbar" }, el("div", { class: "chips" }, [["hoy", "Hoy"], ["semana", "7 días"], ["mes", "Mes"]].map(([k, t]) =>
       el("button", { class: "chip", "aria-pressed": S.periodo === k ? "true" : "false", onclick: () => { S.periodo = k; render(); } }, t))),
@@ -711,13 +760,15 @@ function vTablero() {
       el("div", { class: "kpi" }, el("b", null, r.total), el("span", null, "Comisiones (" + r.retornadas + " cerradas)")),
       el("div", { class: "kpi hl" }, el("b", { style: "color:var(--ok)" }, r.evitados), el("span", null, "Viajes vacíos evitados (" + r.agrupados + " agrupados · " + r.retornos_coord + " retornos)")),
       el("div", { class: "kpi" }, el("b", { style: "color:" + (r.retornos_vacios ? "var(--warn)" : "inherit") }, r.retornos_vacios), el("span", null, "Retornos en vacío")),
-      el("div", { class: "kpi" }, el("b", null, fmt(r.porComb.GASOHOL.km + r.porComb.PETROLEO.km, 0)), el("span", null, "Km recorridos · " + r.pax + " pasajeros"))),
-    el("h3", null, "Combustible gastado en comisiones"),
+      el("div", { class: "kpi" }, el("b", null, fmt(rk.porComb.GASOHOL.km + rk.porComb.PETROLEO.km, 0)), el("span", null, "Km recorridos (kilometraje diario) · " + r.pax + " pasajeros"))),
+    el("div", { class: "row sp", style: "margin-top:18px" }, el("h3", { style: "margin:0" }, "Combustible gastado (kilometraje diario)"),
+      el("button", { class: "btn", onclick: () => { S.tab = "kilometraje"; S.fKm = hoy(); render(); } }, "Registrar kilometraje")),
+    kmHoyFalta() ? el("div", { class: "alert warn", style: "margin-top:8px" }, "Aún no se registra el kilometraje de hoy (" + G.HORA_KM + ").") : null,
     el("div", { class: "kpis" }, ["PETROLEO", "GASOHOL"].map((t) => el("div", { class: "kpi" },
-      el("b", null, fmt(r.porComb[t].gal_est, 2) + " gl"),
-      el("span", null, G.COMBUSTIBLE_NOMBRE[t] + " · " + fmt(r.porComb[t].km, 0) + " km")))),
-    tablaCombustible(r),
-    sinKm ? el("p", { class: "small mut" }, sinKm + " comisión(es) del periodo aún sin kilometraje de salida y llegada: se suman cuando el chofer registra el odómetro al salir y al volver.") : null,
+      el("b", null, fmt(rk.porComb[t].galones, 2) + " gl"),
+      el("span", null, G.COMBUSTIBLE_NOMBRE[t] + " · " + fmt(rk.porComb[t].km, 0) + " km")))),
+    tablaCombustible(rk),
+    rk.dias_registrados ? el("p", { class: "small mut" }, rk.dias_registrados + " día(s) con kilometraje registrado en el periodo.") : null,
     vigilar.length ? el("div", { class: "alert warn", style: "margin-top:14px" }, el("b", null, "Retornos en vacío previstos hoy"), vigilar.map((c) => el("div", null, c.hora_salida + " " + c.destino + " · " + nVeh(veh(c.vehiculo_id))))) : null,
     el("div", { class: "grid2", style: "margin-top:14px" },
       el("div", { class: "card" }, el("b", null, "En ruta ahora (" + enRuta.length + ")"),
