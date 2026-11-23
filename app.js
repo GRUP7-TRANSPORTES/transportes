@@ -126,7 +126,11 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && S.
 async function sincronizar(forzarRender) {
   const d = await api("sync");
   S.d = d; S.yo = d.yo;
-  if (S.primera) { S.vistos = Store.vistos(S.yo.id); S.primera = false; if (!S.vistos.size) { d.eventos.forEach((e) => S.vistos.add(e.id)); Store.guardarVistos(S.yo.id, S.vistos); } }
+  if (S.primera) {
+    S.vistos = Store.vistos(S.yo.id); S.primera = false;
+    if (!S.vistos.size) { d.eventos.forEach((e) => S.vistos.add(e.id)); Store.guardarVistos(S.yo.id, S.vistos); }
+    suscribirPush(false).catch(() => {}); // si este equipo ya tenía avisos, ahora llegan a quien ingresó
+  }
   notificarNuevos(d.eventos);
   const activo = document.activeElement;
   const escribiendo = activo && $("#app").contains(activo) && /INPUT|TEXTAREA|SELECT/.test(activo.tagName);
@@ -255,7 +259,12 @@ function render() {
       el("button", { class: "icon-btn", onclick: menuCuenta, "aria-label": "Mi cuenta" }, "☰")),
     tabs.length > 1 ? el("nav", { class: "tabs" }, tabs.map((t) => el("button", { "aria-current": S.tab === t ? "page" : null, onclick: () => { S.tab = t; render(); } }, TABS[t][0]))) : null);
   const banner = Store.DEMO ? el("div", { class: "demo" }, "MODO DEMO: datos de ejemplo guardados solo en este equipo. Conecta el servidor para usarla de verdad.") : null;
-  $("#app").replaceChildren(...[header, banner, el("main", null, TABS[S.tab][1]())].filter(Boolean));
+  const pedirAvisos = !Store.DEMO && "Notification" in window && Notification.permission === "default"
+    ? el("div", { class: "alert", style: "margin:10px 12px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap" },
+      el("span", { style: "flex:1;min-width:180px" }, "🔔 Activa los avisos para que te lleguen tus comisiones al celular, aunque la app esté cerrada."),
+      el("button", { class: "btn ac", onclick: () => activarNotificaciones().then(render) }, "Activar avisos"))
+    : null;
+  $("#app").replaceChildren(...[header, banner, pedirAvisos, el("main", null, TABS[S.tab][1]())].filter(Boolean));
 }
 
 function verAvisos() {
@@ -273,18 +282,55 @@ function menuCuenta() {
   const cerrar = modal("Mi cuenta", el("div", null,
     el("p", null, el("b", null, S.yo.grado + " " + S.yo.nombre), el("br"), el("span", { class: "mut" }, G.ROL_NOMBRE[S.yo.rol])),
     el("div", { class: "list" },
-      notif ? el("button", { class: "btn block", onclick: activarNotificaciones }, Notification.permission === "granted" ? "✓ Notificaciones activas en este equipo" : "Activar notificaciones en este equipo") : null,
-      el("button", { class: "btn block", onclick: () => { cerrar(); vincularTelegram(); } }, S.yo.telegram ? "✓ Telegram vinculado (volver a vincular)" : "Recibir avisos por Telegram"),
-      el("button", { class: "btn block", onclick: async () => { try { const r = await api("prueba_aviso"); toast(r.demo ? "En modo demo los avisos solo aparecen dentro de la app." : r.telegram ? "Aviso de prueba enviado a tu Telegram." : "No tienes Telegram vinculado.", "ok"); } catch (e) { toast(e.message, "bad"); } } }, "Enviarme un aviso de prueba"),
+      notif ? el("button", { class: "btn block" + (Notification.permission === "granted" ? "" : " ac"), onclick: activarNotificaciones }, Notification.permission === "granted" ? "✓ Avisos activos en este equipo (volver a activar)" : "🔔 Activar avisos en este celular") : null,
+      S.d && S.d.bot ? el("button", { class: "btn block", onclick: () => { cerrar(); vincularTelegram(); } }, S.yo.telegram ? "✓ Telegram vinculado (volver a vincular)" : "Recibir avisos por Telegram") : null,
+      el("button", { class: "btn block", onclick: async () => {
+        try {
+          const r = await api("prueba_aviso");
+          toast(r.demo ? "En modo demo los avisos solo aparecen dentro de la app." : r.celulares ? "Aviso de prueba enviado. Debe llegarte en unos segundos, aunque cierres la app." : "Aún no activaste los avisos en este celular: toca «Activar avisos en este celular».", r.celulares || r.demo ? "ok" : "warn", 6000);
+        } catch (e) { toast(e.message, "bad"); }
+      } }, "Enviarme un aviso de prueba"),
       Store.DEMO ? el("button", { class: "btn bad block", onclick: () => { if (confirm("¿Borrar todos los datos de la demostración y empezar de nuevo?")) { Store.reiniciarDemo(); cerrar(); arrancar(); } } }, "Reiniciar datos de demostración") : null,
       el("button", { class: "btn primary block", onclick: () => { Store.sesion = ""; S.yo = null; S.d = null; cerrar(); arrancar(); } }, "Salir (cambiar de persona)")),
     el("p", { class: "small mut" }, "Versión " + G.VERSION + (Store.DEMO ? " · modo demo" : ""))));
 }
 
+const esIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent);
+const instalada = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+function claveABytes(b64) {
+  const s = atob((b64 + "===".slice((b64.length + 3) % 4)).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(s, (c) => c.charCodeAt(0));
+}
+
 async function activarNotificaciones() {
-  if (!("Notification" in window)) return toast("Este navegador no permite notificaciones.", "bad");
+  if (esIOS() && !instalada()) return modal("Avisos en iPhone", el("div", null,
+    el("p", null, "En iPhone los avisos solo funcionan con la app instalada:"),
+    el("p", null, "1. En Safari toca ", el("b", null, "Compartir"), " → ", el("b", null, "Añadir a pantalla de inicio"), "."),
+    el("p", null, "2. Abre la app desde ese ícono y vuelve a tocar «Activar avisos»."),
+    el("p", { class: "small mut" }, "Necesita iOS 16.4 o más nuevo.")));
+  if (!("Notification" in window)) return toast("Este navegador no permite notificaciones. Usa Chrome.", "bad");
   const r = await Notification.requestPermission();
-  toast(r === "granted" ? "Listo: verás los avisos mientras la app esté abierta. Para recibirlos con la app cerrada, vincula Telegram." : "No se dio permiso. Puedes activarlo en la configuración del navegador.", r === "granted" ? "ok" : "warn", 6000);
+  if (r !== "granted") return toast("No se dio permiso. Actívalo en Ajustes → Notificaciones → Chrome (o la app) y vuelve a intentar.", "warn", 7000);
+  if (Store.DEMO) return toast("Modo demo: los avisos aparecen solo con la app abierta.", "ok");
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return toast("Este navegador no recibe avisos con la app cerrada. Usa Chrome.", "warn", 6000);
+  try {
+    await suscribirPush(true);
+    toast("Listo: los avisos te llegarán a este celular aunque la app esté cerrada. Prueba con «Enviarme un aviso de prueba».", "ok", 7000);
+  } catch (e) { toast("No se pudo activar: " + e.message, "bad", 7000); }
+}
+
+// Registra este equipo para recibir avisos. Sin "crear", solo actualiza quién lo usa (si ya estaba activo).
+async function suscribirPush(crear) {
+  if (Store.DEMO || !("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window) || Notification.permission !== "granted") return false;
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    if (!crear) return false;
+    const { clave } = await api("push_clave");
+    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: claveABytes(clave) });
+  }
+  await api("push_suscribir", { endpoint: sub.endpoint });
+  return true;
 }
 
 async function vincularTelegram() {
@@ -1095,9 +1141,10 @@ function vPersonal() {
   return el("div", null,
     el("h2", null, "Personal"),
     el("div", { class: "card scroll-x" }, el("table", { class: "t" },
-      el("thead", null, el("tr", null, el("th", null, "Nombre"), el("th", null, "Rol"), el("th", null, "PIN"), el("th", null, "Telegram"), el("th"))),
+      el("thead", null, el("tr", null, el("th", null, "Nombre"), el("th", null, "Rol"), el("th", null, "PIN"), el("th", null, "Avisos al celular"), el("th"))),
       el("tbody", null, S.d.personal.map((p) => el("tr", null, el("td", { class: "strong" }, p.grado + " " + p.nombre), el("td", null, G.ROL_NOMBRE[p.rol]),
-        el("td", null, p.tiene_pin ? tag("Creado", "t-ok") : tag("Pendiente", "t-mut")), el("td", null, p.telegram ? tag("Vinculado", "t-ok") : tag("No", "t-mut")),
+        el("td", null, p.tiene_pin ? tag("Creado", "t-ok") : tag("Pendiente", "t-mut")),
+        el("td", null, (S.d.con_avisos || []).includes(p.id) ? tag("Activos", "t-ok") : p.telegram ? tag("Telegram", "t-ok") : tag("No", "t-mut")),
         el("td", null, p.tiene_pin && p.id !== S.yo.id ? el("button", { class: "btn ghost", onclick: async () => {
           if (!confirm("¿Reiniciar el PIN de " + p.nombre + "? Tendrá que crear uno nuevo al ingresar.")) return;
           try { await api("reset_pin", { persona_id: p.id }); toast("PIN reiniciado. " + p.nombre + " creará uno nuevo al ingresar.", "ok"); await sincronizar(true); } catch (e) { toast(e.message, "bad"); }

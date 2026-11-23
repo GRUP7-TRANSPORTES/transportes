@@ -1,7 +1,7 @@
 // Guarda solo la "cáscara" de la app para que abra rápido y sin señal.
 // Las llamadas al servidor (Apps Script) nunca se guardan en caché.
-const CACHE = "grup7-v6";
-const SHELL = ["./", "index.html", "styles.css?v=6", "config.js?v=6", "logic.js?v=6", "store.js?v=6", "app.js?v=6", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
+const CACHE = "grup7-v7";
+const SHELL = ["./", "index.html", "styles.css?v=7", "config.js?v=7", "logic.js?v=7", "store.js?v=7", "app.js?v=7", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
@@ -23,6 +23,40 @@ self.addEventListener("fetch", (e) => {
       .catch(() => caches.match(e.request))
   );
 });
+
+// ---- Avisos al celular con la app cerrada (Web Push) ----
+// El aviso llega vacío; aquí se pide el texto al servidor con la dirección de avisos de este equipo.
+self.window = self;
+try { importScripts("config.js"); } catch (_) { /* sin config: no hay servidor */ }
+const K_VISTOS = "./__avisos_mostrados";
+
+async function leerMostrados() {
+  try { const r = await (await caches.open(CACHE)).match(K_VISTOS); return r ? await r.json() : []; } catch (_) { return []; }
+}
+async function guardarMostrados(ids) {
+  try { await (await caches.open(CACHE)).put(K_VISTOS, new Response(JSON.stringify(ids.slice(-100)))); } catch (_) {}
+}
+async function mostrarPush() {
+  let eventos = [];
+  try {
+    const sub = await self.registration.pushManager.getSubscription();
+    if (sub && self.SCRIPT_URL) {
+      const r = await fetch(self.SCRIPT_URL, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ action: "push_pendientes", endpoint: sub.endpoint }) });
+      eventos = (await r.json()).eventos || [];
+    }
+  } catch (_) {}
+  const mostrados = await leerMostrados();
+  const nuevos = eventos.filter((e) => !mostrados.includes(e.id));
+  const opc = { icon: "icon-192.png", badge: "icon-192.png", vibrate: [200, 100, 200] };
+  if (!nuevos.length) {
+    // Siempre hay que mostrar algo. Si no hay nada nuevo, se repite el último sin volver a sonar.
+    if (eventos.length) return self.registration.showNotification("Transportes GRUP7", { ...opc, body: eventos[0].texto, tag: eventos[0].id, renotify: false });
+    return self.registration.showNotification("Transportes GRUP7", { ...opc, body: "Tienes un aviso nuevo. Toca para verlo.", tag: "grup7" });
+  }
+  await Promise.all(nuevos.reverse().map((e) => self.registration.showNotification("Transportes GRUP7", { ...opc, body: e.texto, tag: e.id })));
+  await guardarMostrados(mostrados.concat(nuevos.map((e) => e.id)));
+}
+self.addEventListener("push", (e) => e.waitUntil(mostrarPush()));
 
 // Al tocar una notificación, abrir (o enfocar) la app.
 self.addEventListener("notificationclick", (e) => {
